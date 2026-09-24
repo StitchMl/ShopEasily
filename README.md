@@ -34,16 +34,10 @@ Gli asset sono generici e privi di marchi commerciali, così possono essere usat
 ## Avvio
 
 1. Apri il progetto con Android Studio.
-2. Aggiungi al file locale e non versionato `local.properties`:
+2. Esegui **Sync Project with Gradle Files**.
+3. Avvia l'app su un dispositivo o emulatore con accesso a Internet.
 
-   ```properties
-   MAPS_API_KEY=la_tua_chiave_maps_android
-   ```
-
-3. Nella Google Cloud Console abilita **Maps SDK for Android** e limita la chiave al package `it.lagioiaproductions.shopeasily` e al certificato SHA-1 usato per la build.
-4. Esegui **Sync Project with Gradle Files** e avvia l'app su un emulatore con Google Play Services.
-
-Senza una chiave valida le altre sezioni funzionano, ma Google Maps non può caricare le tessere. Il Maps SDK nativo ha attualmente una soglia gratuita, ma Google richiede comunque un progetto Cloud con fatturazione e una chiave limitata. In alternativa si può migrare la schermata a **MapLibre** con dati OpenStreetMap; per una pubblicazione reale bisogna scegliere un provider di tile con capacità adeguata o ospitarlo, perché i server pubblici OSM non sono un CDN gratuito per traffico elevato.
+La mappa usa **MapLibre e OpenStreetMap** e non richiede chiavi API. La configurazione attuale dei tile pubblici è adatta allo sviluppo; prima della pubblicazione va scelto un provider con capacità e condizioni adeguate oppure un servizio ospitato direttamente.
 
 ## Backend dati
 
@@ -53,7 +47,7 @@ La cartella `backend/` contiene un servizio FastAPI eseguibile che:
 - verifica `robots.txt`, identifica l'app e limita la frequenza;
 - espone piccoli negozi (macellerie, fruttivendoli, panifici, aziende agricole e mercati) da OpenStreetMap/Overpass;
 - calcola i prezzi mediani giornalieri di benzina, diesel e GPL dal CSV open data MIMIT;
-- lascia configurabile il prezzo dell'elettricità.
+- conserva automaticamente l'ultimo prezzo medio disponibile per funzionare anche offline.
 
 Le app dei retailer e le recensioni di Google Maps/Tripadvisor vanno acquisite solo tramite API ufficiali e relative licenze: non vengono aggirati login, CAPTCHA o divieti di scraping. Tripadvisor richiede inoltre attribuzione per i dati della Content API.
 
@@ -61,6 +55,8 @@ Le app dei retailer e le recensioni di Google Maps/Tripadvisor vanno acquisite s
 
 - ricerca e ranking di offerte attive nel giorno corrente;
 - immagini prodotto e indicatori di qualità/sostenibilità;
+- badge prodotto solo-icon con descrizioni accessibili a TalkBack;
+- illustrazioni minimali per categoria; immagini ufficiali del negozio solo quando il feed ne concede esplicitamente il riuso;
 - filtro per distanza, carta fedeltà ed età minima;
 - profilo con carte fedeltà possedute: un'offerta riservata viene mostrata solo per la catena registrata;
 - mappa con posizione utente e marker dei punti vendita;

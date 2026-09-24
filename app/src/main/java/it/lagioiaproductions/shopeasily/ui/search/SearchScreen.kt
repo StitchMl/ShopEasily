@@ -2,6 +2,7 @@ package it.lagioiaproductions.shopeasily.ui.search
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -10,22 +11,31 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconToggleButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
@@ -34,6 +44,22 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Bolt
+import androidx.compose.material.icons.rounded.CalendarMonth
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.CreditCard
+import androidx.compose.material.icons.rounded.Eco
+import androidx.compose.material.icons.rounded.Elderly
+import androidx.compose.material.icons.rounded.Euro
+import androidx.compose.material.icons.rounded.Handyman
+import androidx.compose.material.icons.rounded.NearMe
+import androidx.compose.material.icons.rounded.Pets
+import androidx.compose.material.icons.rounded.Public
+import androidx.compose.material.icons.rounded.Star
+import androidx.compose.material.icons.rounded.WbSunny
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import it.lagioiaproductions.shopeasily.R
 import it.lagioiaproductions.shopeasily.data.model.Offer
@@ -91,37 +117,24 @@ fun SearchScreen(
             Spacer(Modifier.height(16.dp))
 
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
+                modifier = Modifier.padding(vertical = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                SortMode.entries.forEach { sortMode ->
-                    FilterChip(
-                        selected = state.filters.sortMode == sortMode,
-                        onClick = { viewModel.selectSortMode(sortMode) },
-                        label = { Text(sortMode.label) },
-                    )
-                }
-            }
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                FilterChip(
+                SortMenu(state.filters.sortMode, viewModel::selectSortMode)
+                CompactFilter(
+                    icon = Icons.Rounded.Eco,
+                    description = "Solo prodotti sostenibili",
                     selected = state.filters.sustainableOnly,
                     onClick = { viewModel.setSustainableOnly(!state.filters.sustainableOnly) },
-                    label = { Text("Solo sostenibili") },
                 )
-                FilterChip(
-                    selected = !state.filters.includeLoyaltyOffers,
+                CompactFilter(
+                    icon = Icons.Rounded.CreditCard,
+                    description = "Offerte delle mie carte fedeltà",
+                    selected = state.filters.includeLoyaltyOffers,
                     onClick = {
                         viewModel.setIncludeLoyaltyOffers(!state.filters.includeLoyaltyOffers)
                     },
-                    label = { Text("Senza carta fedeltà") },
                 )
             }
 
@@ -191,37 +204,19 @@ private fun OfferCard(offer: Offer) {
                 text = offer.storeName,
                 style = MaterialTheme.typography.bodyLarge,
             )
-            offer.qualityScore?.let { score ->
-                Text("Qualità: ${"%.1f".format(Locale.ITALY, score)}/5")
-            }
-            if (offer.loyaltyRequired) {
-                Text(
-                    text = "Richiede carta fedeltà",
-                    color = MaterialTheme.colorScheme.error,
-                )
-            }
-            offer.minimumAge?.let { minimumAge ->
-                Text(
-                    text = "Riservata a clienti $minimumAge+",
-                    color = MaterialTheme.colorScheme.tertiary,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-            if (offer.flashOffer) {
-                Text("Offerta lampo", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
-            }
-            Text(
-                text = "Valida: ${offer.activeDays.joinToString { it.shortLabel }}",
-                style = MaterialTheme.typography.bodySmall,
-            )
-            if (offer.sustainabilityLabels.isNotEmpty()) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.padding(top = 8.dp),
-                ) {
-                    offer.sustainabilityLabels.take(2).forEach { label ->
-                        AssistChip(onClick = {}, label = { Text(label) })
-                    }
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+                modifier = Modifier.padding(top = 8.dp),
+            ) {
+                offer.qualityScore?.let { score ->
+                    ProductBadge(Icons.Rounded.Star, "Qualità ${"%.1f".format(Locale.ITALY, score)} su 5")
+                }
+                if (offer.loyaltyRequired) ProductBadge(Icons.Rounded.CreditCard, "Richiede carta fedeltà")
+                offer.minimumAge?.let { ProductBadge(Icons.Rounded.Elderly, "Riservata a clienti di almeno $it anni") }
+                if (offer.flashOffer) ProductBadge(Icons.Rounded.Bolt, "Offerta lampo")
+                ProductBadge(Icons.Rounded.CalendarMonth, "Valida ${offer.activeDays.joinToString { it.shortLabel }}")
+                offer.sustainabilityLabels.take(3).forEach { label ->
+                    ProductBadge(label.badgeIcon(), label)
                 }
             }
         }
@@ -238,6 +233,84 @@ private fun ProductImageKey.drawableResource(): Int = when (this) {
     ProductImageKey.BAKERY -> R.drawable.product_bakery
     ProductImageKey.HOUSEHOLD -> R.drawable.product_household
     ProductImageKey.OTHER -> R.drawable.product_generic
+}
+
+private fun SortMode.icon(): ImageVector = when (this) {
+    SortMode.SMART -> Icons.Rounded.AutoAwesome
+    SortMode.PRICE -> Icons.Rounded.Euro
+    SortMode.DISTANCE -> Icons.Rounded.NearMe
+    SortMode.QUALITY -> Icons.Rounded.Star
+}
+
+@Composable
+private fun SortMenu(selected: SortMode, onSelected: (SortMode) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { expanded = true }, modifier = Modifier.size(44.dp)) {
+            Icon(selected.icon(), contentDescription = "Ordina per ${selected.label}")
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            SortMode.entries.forEach { mode ->
+                DropdownMenuItem(
+                    text = { Text(mode.label) },
+                    leadingIcon = { Icon(mode.icon(), contentDescription = null) },
+                    onClick = {
+                        onSelected(mode)
+                        expanded = false
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompactFilter(
+    icon: ImageVector,
+    description: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Surface(
+        color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
+        shape = CircleShape,
+    ) {
+        IconToggleButton(
+            checked = selected,
+            onCheckedChange = { onClick() },
+            modifier = Modifier.size(44.dp),
+        ) {
+            Icon(icon, contentDescription = description, modifier = Modifier.size(22.dp))
+        }
+    }
+}
+
+@Composable
+private fun ProductBadge(icon: ImageVector, description: String) {
+    Surface(
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        shape = CircleShape,
+        modifier = Modifier
+            .size(30.dp)
+            .semantics { contentDescription = description },
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center,
+        ) {
+            Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
+        }
+    }
+}
+
+private fun String.badgeIcon(): ImageVector = when {
+    contains("animale", ignoreCase = true) || contains("aperto", ignoreCase = true) -> Icons.Rounded.Pets
+    contains("bio", ignoreCase = true) || contains("locale", ignoreCase = true) ||
+        contains("km 0", ignoreCase = true) -> Icons.Rounded.Eco
+    contains("ital", ignoreCase = true) -> Icons.Rounded.Public
+    contains("stagion", ignoreCase = true) -> Icons.Rounded.WbSunny
+    contains("artigian", ignoreCase = true) -> Icons.Rounded.Handyman
+    else -> Icons.Rounded.Check
 }
 
 private fun distanceLabel(distanceMeters: Int): String = when {

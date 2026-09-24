@@ -110,14 +110,13 @@ class UserPreferencesRepository(private val context: Context) {
     suspend fun setTransport(vehicle: VehicleType, fuel: FuelType) = context.shopEasilyDataStore.edit {
         it[Keys.vehicleType] = vehicle.name
         it[Keys.fuelType] = fuel.name
-        it[Keys.fuelPrice] = fuel.defaultPrice.toString()
     }
 
     suspend fun setConsumption(value: Double) = context.shopEasilyDataStore.edit {
         it[Keys.consumption] = value.coerceIn(0.0, 100.0).toString()
     }
 
-    suspend fun setFuelPrice(value: Double) = context.shopEasilyDataStore.edit {
+    suspend fun setAutomaticFuelPrice(value: Double) = context.shopEasilyDataStore.edit {
         it[Keys.fuelPrice] = value.coerceIn(0.0, 10.0).toString()
     }
 
