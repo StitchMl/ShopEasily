@@ -1,0 +1,15 @@
+# Copia in sources.yaml e aggiungi esclusivamente fonti autorizzate.
+sources:
+  - id: demo-pdf
+    enabled: false
+    kind: pdf
+    url: https://example.org/volantino.pdf
+    store: Negozio demo
+  - id: demo-html
+    enabled: false
+    kind: html
+    url: https://example.org/offerte
+    store: Negozio demo
+    item_selector: .offer
+    name_selector: .product-name
+    price_selector: .price

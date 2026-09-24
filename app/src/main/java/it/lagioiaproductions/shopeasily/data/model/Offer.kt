@@ -4,6 +4,10 @@ enum class ProductImageKey {
     MILK,
     PASTA,
     PRODUCE,
+    MEAT,
+    BAKERY,
+    HOUSEHOLD,
+    OTHER,
 }
 
 enum class OfferDay(val shortLabel: String) {

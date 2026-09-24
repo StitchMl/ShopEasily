@@ -46,7 +46,7 @@ fun ShoppingListScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text("Lista della spesa", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-        Text("Il confronto include prezzi normali, offerte, carburante e consegna.")
+        Text("${state.preferences.vehicleType.label} · ${state.preferences.fuelType.label}")
         OutlinedTextField(
             value = newItem,
             onValueChange = { newItem = it },

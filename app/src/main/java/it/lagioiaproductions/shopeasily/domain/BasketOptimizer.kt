@@ -3,6 +3,18 @@ package it.lagioiaproductions.shopeasily.domain
 import it.lagioiaproductions.shopeasily.data.model.CatalogPrice
 import it.lagioiaproductions.shopeasily.data.model.Store
 import it.lagioiaproductions.shopeasily.data.model.StoreChannel
+import it.lagioiaproductions.shopeasily.data.preferences.FuelType
+import it.lagioiaproductions.shopeasily.data.preferences.VehicleType
+
+data class TransportProfile(
+    val vehicle: VehicleType = VehicleType.CAR,
+    val fuel: FuelType = FuelType.GASOLINE,
+    val consumptionPer100Km: Double = 6.5,
+    val pricePerUnit: Double = FuelType.GASOLINE.defaultPrice,
+) {
+    fun costPerKm(): Double = consumptionPer100Km / 100.0 * pricePerUnit
+    fun emissionKgPerKm(): Double = consumptionPer100Km / 100.0 * fuel.kgCo2PerUnit * vehicle.emissionMultiplier
+}
 
 data class BasketAssignment(
     val requestedItem: String,
@@ -27,8 +39,7 @@ object BasketOptimizer {
         requestedItems: List<String>,
         catalog: List<CatalogPrice>,
         maximumStores: Int = 2,
-        carCostPerKm: Double = 0.25,
-        carEmissionKgPerKm: Double = 0.17,
+        transport: TransportProfile = TransportProfile(),
     ): List<BasketPlan> {
         if (requestedItems.isEmpty()) return emptyList()
         val stores = catalog.map(CatalogPrice::store).distinctBy(Store::id)
@@ -41,7 +52,7 @@ object BasketOptimizer {
         }
 
         val sortedPlans = storeSets.mapNotNull { selectedStores ->
-            buildPlan(requestedItems, catalog, selectedStores, carCostPerKm, carEmissionKgPerKm)
+            buildPlan(requestedItems, catalog, selectedStores, transport)
         }.sortedWith(
             compareBy<BasketPlan> { it.unavailableItems }
                 .thenBy { it.monetaryTotal + it.ethicalRiskPenalty },
@@ -57,8 +68,7 @@ object BasketOptimizer {
         requestedItems: List<String>,
         catalog: List<CatalogPrice>,
         stores: List<Store>,
-        carCostPerKm: Double,
-        carEmissionKgPerKm: Double,
+        transport: TransportProfile,
     ): BasketPlan? {
         val available = catalog.filter { candidate -> candidate.store in stores }
         val assignments = requestedItems.mapNotNull { requested ->
@@ -85,8 +95,8 @@ object BasketOptimizer {
             stores = usedStores,
             productsTotal = assignments.sumOf { it.catalogItem.price },
             serviceCosts = deliveryFees,
-            estimatedTravelCost = physicalRoundTripKm * carCostPerKm,
-            estimatedEmissionKgCo2 = deliveryEmissions + physicalRoundTripKm * carEmissionKgPerKm,
+            estimatedTravelCost = physicalRoundTripKm * transport.costPerKm(),
+            estimatedEmissionKgCo2 = deliveryEmissions + physicalRoundTripKm * transport.emissionKgPerKm(),
             ethicalRiskPenalty = laborPenalty,
         )
     }

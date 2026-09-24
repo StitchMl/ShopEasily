@@ -67,6 +67,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 userAge = preferences.age,
                 maximumDistanceMeters = preferences.radiusKm * 1_000,
                 includeLoyaltyOffers = preferences.includeLoyaltyOffers,
+                loyaltyCards = preferences.loyaltyCards,
             )
             repository.search(query).collectLatest { results ->
                 _uiState.value = _uiState.value.copy(

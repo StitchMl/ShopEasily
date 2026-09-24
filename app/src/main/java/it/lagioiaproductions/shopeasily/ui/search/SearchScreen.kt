@@ -65,14 +65,8 @@ fun SearchScreen(
                 )
                 Column(Modifier.padding(start = 10.dp)) {
                     Text("ShopEasily", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                    Text("Trova la spesa migliore", style = MaterialTheme.typography.titleMedium)
                 }
             }
-            Text(
-                text = "Confronta prezzi, distanza e sostenibilità",
-                style = MaterialTheme.typography.bodyLarge,
-                modifier = Modifier.padding(bottom = 12.dp),
-            )
 
             OutlinedTextField(
                 value = state.query,
@@ -82,7 +76,7 @@ fun SearchScreen(
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = { viewModel.submitSearch() }),
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
             )
 
             Button(
@@ -91,7 +85,7 @@ fun SearchScreen(
                     .fillMaxWidth()
                     .padding(top = 8.dp),
             ) {
-                Text("Confronta offerte")
+                Text("Cerca")
             }
 
             Spacer(Modifier.height(16.dp))
@@ -240,6 +234,10 @@ private fun ProductImageKey.drawableResource(): Int = when (this) {
     ProductImageKey.MILK -> R.drawable.product_milk
     ProductImageKey.PASTA -> R.drawable.product_pasta
     ProductImageKey.PRODUCE -> R.drawable.product_produce
+    ProductImageKey.MEAT -> R.drawable.product_meat
+    ProductImageKey.BAKERY -> R.drawable.product_bakery
+    ProductImageKey.HOUSEHOLD -> R.drawable.product_household
+    ProductImageKey.OTHER -> R.drawable.product_generic
 }
 
 private fun distanceLabel(distanceMeters: Int): String = when {

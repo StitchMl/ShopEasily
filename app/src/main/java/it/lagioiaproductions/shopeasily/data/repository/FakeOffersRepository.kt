@@ -82,6 +82,33 @@ class FakeOffersRepository : OffersRepository {
             imageKey = ProductImageKey.PRODUCE,
             activeDays = setOf(OfferDay.SATURDAY, OfferDay.SUNDAY),
         ),
+        Offer(
+            id = 6,
+            productName = "Pollo allevato all'aperto 1 kg",
+            brand = null,
+            storeName = "Macelleria di quartiere",
+            price = 8.90,
+            unitPrice = 8.90,
+            distanceMeters = 650,
+            qualityScore = 4.6f,
+            sustainabilityLabels = listOf("Allevato all'aperto", "Negozio locale"),
+            validUntil = null,
+            imageKey = ProductImageKey.MEAT,
+        ),
+        Offer(
+            id = 7,
+            productName = "Pane artigianale 1 kg",
+            brand = null,
+            storeName = "Mercato Verde",
+            price = 3.20,
+            unitPrice = 3.20,
+            distanceMeters = 1_100,
+            qualityScore = 4.7f,
+            sustainabilityLabels = listOf("Artigianale", "Locale"),
+            validUntil = null,
+            imageKey = ProductImageKey.BAKERY,
+            activeDays = setOf(OfferDay.SATURDAY, OfferDay.SUNDAY),
+        ),
     )
 
     override fun search(query: String): Flow<List<Offer>> {

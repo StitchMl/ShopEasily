@@ -19,6 +19,7 @@ data class SearchFilters(
     val includeLoyaltyOffers: Boolean = true,
     val maximumDistanceMeters: Int = 10_000,
     val userAge: Int? = null,
+    val loyaltyCards: Set<String> = emptySet(),
     val day: OfferDay = currentOfferDay(),
 )
 
@@ -27,7 +28,9 @@ object OfferRanking {
         val filtered = offers.filter { offer ->
             offer.distanceMeters <= filters.maximumDistanceMeters &&
                 (!filters.sustainableOnly || offer.sustainabilityLabels.isNotEmpty()) &&
-                (filters.includeLoyaltyOffers || !offer.loyaltyRequired) &&
+                (!offer.loyaltyRequired || (
+                    filters.includeLoyaltyOffers && offer.storeName in filters.loyaltyCards
+                )) &&
                 offer.isActiveOn(filters.day) &&
                 offer.isEligibleFor(filters.userAge)
         }

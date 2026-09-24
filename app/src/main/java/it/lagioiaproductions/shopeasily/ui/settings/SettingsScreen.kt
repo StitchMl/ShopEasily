@@ -11,7 +11,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
@@ -28,7 +35,17 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import it.lagioiaproductions.shopeasily.data.preferences.FuelType
+import it.lagioiaproductions.shopeasily.data.preferences.VehicleType
 
+private val supportedLoyaltyPrograms = listOf(
+    "Supermercato Centro",
+    "Market Bio",
+    "Discount Sud",
+    "Spesa Online Verde",
+)
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     modifier: Modifier = Modifier,
@@ -36,6 +53,16 @@ fun SettingsScreen(
 ) {
     val preferences by viewModel.preferences.collectAsStateWithLifecycle()
     var ageText by remember(preferences.age) { mutableStateOf(preferences.age?.toString().orEmpty()) }
+    var loyaltyMenuOpen by remember { mutableStateOf(false) }
+    var selectedShop by remember { mutableStateOf(supportedLoyaltyPrograms.first()) }
+    var vehicleMenuOpen by remember { mutableStateOf(false) }
+    var fuelMenuOpen by remember { mutableStateOf(false) }
+    var consumptionText by remember(preferences.consumptionPer100Km) {
+        mutableStateOf(preferences.consumptionPer100Km.toString())
+    }
+    var priceText by remember(preferences.fuelPricePerUnit) {
+        mutableStateOf(preferences.fuelPricePerUnit.toString())
+    }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted -> viewModel.setFlashNotifications(granted) }
@@ -43,11 +70,11 @@ fun SettingsScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Text("Preferenze", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-        Text("I dati restano sul dispositivo e servono per personalizzare le offerte.")
+        Text("Profilo", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         OutlinedTextField(
             value = ageText,
             onValueChange = { value ->
@@ -56,7 +83,6 @@ fun SettingsScreen(
                 viewModel.setAge(filtered.toIntOrNull()?.takeIf { it in 1..120 })
             },
             label = { Text("Età (facoltativa)") },
-            supportingText = { Text("Serve per promozioni 65+ o altre fasce dichiarate") },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
@@ -67,6 +93,106 @@ fun SettingsScreen(
             onValueChange = { viewModel.setRadiusKm(it.toInt()) },
             valueRange = 1f..30f,
             steps = 28,
+        )
+        Text("Trasporto", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        ExposedDropdownMenuBox(
+            expanded = vehicleMenuOpen,
+            onExpandedChange = { vehicleMenuOpen = !vehicleMenuOpen },
+        ) {
+            OutlinedTextField(
+                value = preferences.vehicleType.label,
+                onValueChange = {}, readOnly = true, label = { Text("Mezzo") },
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(vehicleMenuOpen) },
+                modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
+            )
+            ExposedDropdownMenu(vehicleMenuOpen, { vehicleMenuOpen = false }) {
+                VehicleType.entries.forEach { vehicle ->
+                    DropdownMenuItem(text = { Text(vehicle.label) }, onClick = {
+                        val fuel = if (vehicle == VehicleType.WALK || vehicle == VehicleType.BICYCLE) FuelType.NONE
+                        else preferences.fuelType.takeUnless { it == FuelType.NONE } ?: FuelType.GASOLINE
+                        viewModel.setTransport(vehicle, fuel)
+                        vehicleMenuOpen = false
+                    })
+                }
+            }
+        }
+        ExposedDropdownMenuBox(
+            expanded = fuelMenuOpen,
+            onExpandedChange = { fuelMenuOpen = !fuelMenuOpen },
+        ) {
+            OutlinedTextField(
+                value = preferences.fuelType.label,
+                onValueChange = {}, readOnly = true, label = { Text("Alimentazione") },
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(fuelMenuOpen) },
+                modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
+            )
+            ExposedDropdownMenu(fuelMenuOpen, { fuelMenuOpen = false }) {
+                FuelType.entries.filter { fuel ->
+                    preferences.vehicleType in listOf(VehicleType.WALK, VehicleType.BICYCLE) || fuel != FuelType.NONE
+                }.forEach { fuel ->
+                    DropdownMenuItem(text = { Text(fuel.label) }, onClick = {
+                        viewModel.setTransport(preferences.vehicleType, fuel)
+                        fuelMenuOpen = false
+                    })
+                }
+            }
+        }
+        if (preferences.fuelType != FuelType.NONE) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = consumptionText,
+                    onValueChange = { value ->
+                        consumptionText = value.replace(',', '.')
+                        consumptionText.toDoubleOrNull()?.let(viewModel::setConsumption)
+                    },
+                    label = { Text(if (preferences.fuelType == FuelType.ELECTRIC) "kWh/100 km" else "L/100 km") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    singleLine = true, modifier = Modifier.weight(1f),
+                )
+                OutlinedTextField(
+                    value = priceText,
+                    onValueChange = { value ->
+                        priceText = value.replace(',', '.')
+                        priceText.toDoubleOrNull()?.let(viewModel::setFuelPrice)
+                    },
+                    label = { Text(if (preferences.fuelType == FuelType.ELECTRIC) "€/kWh" else "€/L") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    singleLine = true, modifier = Modifier.weight(1f),
+                )
+            }
+        }
+        Text("Carte fedeltà", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        ExposedDropdownMenuBox(
+            expanded = loyaltyMenuOpen,
+            onExpandedChange = { loyaltyMenuOpen = !loyaltyMenuOpen },
+        ) {
+            OutlinedTextField(
+                value = selectedShop,
+                onValueChange = {},
+                readOnly = true,
+                label = { Text("Negozio") },
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(loyaltyMenuOpen) },
+                modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
+            )
+            ExposedDropdownMenu(
+                expanded = loyaltyMenuOpen,
+                onDismissRequest = { loyaltyMenuOpen = false },
+            ) {
+                supportedLoyaltyPrograms.forEach { shop ->
+                    DropdownMenuItem(
+                        text = { Text(shop) },
+                        onClick = {
+                            selectedShop = shop
+                            loyaltyMenuOpen = false
+                        },
+                    )
+                }
+            }
+        }
+        SettingSwitch(
+            title = "Carta registrata",
+            checked = selectedShop in preferences.loyaltyCards,
+            onCheckedChange = { viewModel.setLoyaltyCard(selectedShop, it) },
         )
         SettingSwitch(
             title = "Preferisci prodotti sostenibili",
@@ -88,10 +214,6 @@ fun SettingsScreen(
                     viewModel.setFlashNotifications(enabled)
                 }
             },
-        )
-        Text(
-            "Le valutazioni etiche dei servizi online vengono mostrate solo quando hanno una fonte verificabile.",
-            style = MaterialTheme.typography.bodySmall,
         )
     }
 }

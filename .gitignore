@@ -14,3 +14,6 @@
 .externalNativeBuild
 .cxx
 local.properties
+backend/.venv/
+backend/sources.yaml
+backend/**/__pycache__/

@@ -26,6 +26,21 @@ class OfferRankingTest {
         assertEquals(listOf(1L), result.map(Offer::id))
     }
 
+    @Test
+    fun loyaltyOfferRequiresTheMatchingOwnedCard() {
+        val loyaltyOffer = offer(id = 3, price = 0.5, distance = 100, sustainable = false)
+            .copy(storeName = "Market", loyaltyRequired = true)
+
+        assertTrue(OfferRanking.apply(listOf(loyaltyOffer), SearchFilters()).isEmpty())
+        assertEquals(
+            listOf(3L),
+            OfferRanking.apply(
+                listOf(loyaltyOffer),
+                SearchFilters(loyaltyCards = setOf("Market")),
+            ).map(Offer::id),
+        )
+    }
+
     private fun offer(id: Long, price: Double, distance: Int, sustainable: Boolean) = Offer(
         id = id,
         productName = "Prodotto $id",

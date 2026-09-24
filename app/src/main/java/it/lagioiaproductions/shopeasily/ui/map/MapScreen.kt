@@ -69,7 +69,6 @@ fun MapScreen(modifier: Modifier = Modifier) {
         ) {
             Column {
                 Text("Negozi vicini", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                Text("Confronta punti vendita e servizi online")
             }
         }
         if (!locationGranted) {
@@ -116,8 +115,8 @@ fun MapScreen(modifier: Modifier = Modifier) {
                     modifier = Modifier.padding(20.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Text("Mappa pronta per la configurazione", fontWeight = FontWeight.Bold)
-                    Text("Aggiungi MAPS_API_KEY a local.properties e sincronizza Gradle. Il resto dell'app è già utilizzabile.")
+                    Text("Configura la mappa", fontWeight = FontWeight.Bold)
+                    Text("Aggiungi MAPS_API_KEY a local.properties")
                     stores.filter { it.channel == StoreChannel.PHYSICAL }.forEach { store ->
                         Text("• ${store.name}: ${store.distanceMeters} m")
                     }

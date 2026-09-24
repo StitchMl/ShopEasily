@@ -7,6 +7,8 @@ import it.lagioiaproductions.shopeasily.data.preferences.UserPreferencesReposito
 import it.lagioiaproductions.shopeasily.data.repository.FakeCatalogRepository
 import it.lagioiaproductions.shopeasily.domain.BasketOptimizer
 import it.lagioiaproductions.shopeasily.domain.BasketPlan
+import it.lagioiaproductions.shopeasily.domain.TransportProfile
+import it.lagioiaproductions.shopeasily.data.preferences.UserPreferences
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -19,6 +21,7 @@ data class ShoppingListItem(val name: String, val checked: Boolean)
 data class ShoppingListUiState(
     val items: List<ShoppingListItem> = emptyList(),
     val plans: List<BasketPlan> = emptyList(),
+    val preferences: UserPreferences = UserPreferences(),
 )
 
 class ShoppingListViewModel(application: Application) : AndroidViewModel(application) {
@@ -28,11 +31,13 @@ class ShoppingListViewModel(application: Application) : AndroidViewModel(applica
 
     val uiState: StateFlow<ShoppingListUiState> = combine(
         preferences.shoppingItems,
+        preferences.preferences,
         plans,
-    ) { items, currentPlans ->
+    ) { items, userPreferences, currentPlans ->
         ShoppingListUiState(
             items = items.map { ShoppingListItem(it.first, it.second) },
             plans = currentPlans,
+            preferences = userPreferences,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ShoppingListUiState())
 
@@ -46,6 +51,12 @@ class ShoppingListViewModel(application: Application) : AndroidViewModel(applica
         plans.value = BasketOptimizer.optimize(
             requestedItems = uiState.value.items.map(ShoppingListItem::name),
             catalog = catalog.catalog,
+            transport = TransportProfile(
+                vehicle = uiState.value.preferences.vehicleType,
+                fuel = uiState.value.preferences.fuelType,
+                consumptionPer100Km = uiState.value.preferences.consumptionPer100Km,
+                pricePerUnit = uiState.value.preferences.fuelPricePerUnit,
+            ),
         )
     }
 }
