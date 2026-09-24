@@ -14,7 +14,6 @@ import it.lagioiaproductions.shopeasily.domain.SortMode
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -23,6 +22,11 @@ data class SearchUiState(
     val offers: List<Offer> = emptyList(),
     val isLoading: Boolean = false,
     val filters: SearchFilters = SearchFilters(),
+    val availableStores: List<String> = emptyList(),
+    val selectedStore: String? = null,
+    val shoppingTotal: Double = 0.0,
+    val matchedShoppingItems: Int = 0,
+    val pendingShoppingItems: Int = 0,
 )
 
 class SearchViewModel(application: Application) : AndroidViewModel(application) {
@@ -55,6 +59,11 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         updateFilters(_uiState.value.filters.copy(includeLoyaltyOffers = enabled))
     }
 
+    fun selectStore(storeName: String?) {
+        _uiState.value = _uiState.value.copy(selectedStore = storeName)
+        search(_uiState.value.query)
+    }
+
     private fun updateFilters(filters: SearchFilters) {
         _uiState.value = _uiState.value.copy(filters = filters)
         search(_uiState.value.query)
@@ -70,13 +79,29 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 includeLoyaltyOffers = preferences.includeLoyaltyOffers,
                 loyaltyCards = preferences.loyaltyCards,
             )
-            repository.search(query).collectLatest { results ->
-                _uiState.value = _uiState.value.copy(
-                    offers = OfferRanking.apply(results, filters),
-                    filters = filters,
-                    isLoading = false,
-                )
+            val allRanked = OfferRanking.apply(repository.search("").first(), filters)
+            val stores = allRanked.map(Offer::storeName).distinct().sorted()
+            val selectedStore = _uiState.value.selectedStore?.takeIf(stores::contains)
+            val results = if (query.isBlank()) allRanked else OfferRanking.apply(repository.search(query).first(), filters)
+            val visibleOffers = results.filter { selectedStore == null || it.storeName == selectedStore }
+            val pendingItems = preferencesRepository.shoppingItems.first().filterNot { it.second }.map { it.first }
+            val totalCandidates = allRanked.filter { selectedStore == null || it.storeName == selectedStore }
+            val matchedPrices = pendingItems.mapNotNull { requested ->
+                totalCandidates.filter { offer ->
+                    offer.productName.contains(requested, ignoreCase = true) ||
+                        requested.contains(offer.productName.substringBefore(' '), ignoreCase = true)
+                }.minOfOrNull(Offer::price)
             }
+            _uiState.value = _uiState.value.copy(
+                offers = visibleOffers,
+                filters = filters,
+                availableStores = stores,
+                selectedStore = selectedStore,
+                shoppingTotal = matchedPrices.sum(),
+                matchedShoppingItems = matchedPrices.size,
+                pendingShoppingItems = pendingItems.size,
+                isLoading = false,
+            )
         }
     }
 }

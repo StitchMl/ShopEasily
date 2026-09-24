@@ -148,7 +148,15 @@ class OnDeviceCatalogRepository(
                 val offers = product.opt("offers")
                 val offer = if (offers is JSONObject) offers else (offers as? JSONArray)?.optJSONObject(0)
                 val price = offer?.opt("price")?.toString()?.replace(',', '.')?.toDoubleOrNull()
-                if (name.isNotBlank() && price != null) result += offer(name, shop.name, price, distance)
+                val image = product.opt("image")
+                val imageUrl = (
+                    if (image is String) image
+                    else if (image is JSONArray) image.optString(0)
+                    else (image as? JSONObject)?.optString("url")
+                    )?.takeIf { it.isNotBlank() && isPublicUrl(it) }
+                if (name.isNotBlank() && price != null) {
+                    result += offer(name, shop.name, price, distance, productImageUrl = imageUrl, storeWebsite = shop.website)
+                }
             }
         }
         return result
@@ -175,16 +183,26 @@ class OnDeviceCatalogRepository(
                     val match = PRICE.find(line) ?: return@mapIndexedNotNull null
                     val price = match.groupValues[1].replace(',', '.').toDoubleOrNull() ?: return@mapIndexedNotNull null
                     val name = line.replace(match.value, "").trim(' ', '-', '–', ':').ifBlank { lines.getOrNull(index - 1).orEmpty() }
-                    name.takeIf { it.length in 2..160 }?.let { offer(it, shop.name, price, distance, documentIndex) }
+                    name.takeIf { it.length in 2..160 }?.let {
+                        offer(it, shop.name, price, distance, documentIndex, storeWebsite = shop.website)
+                    }
                 }
             }
         }.getOrDefault(emptyList())
 
-    private fun offer(name: String, store: String, price: Double, distance: Int, salt: Int = 0) = Offer(
+    private fun offer(
+        name: String,
+        store: String,
+        price: Double,
+        distance: Int,
+        salt: Int = 0,
+        productImageUrl: String? = null,
+        storeWebsite: String? = null,
+    ) = Offer(
         id = "$store|$name|$price|$salt".hashCode().toLong().and(0xffffffffL),
         productName = name, brand = null, storeName = store, price = price, unitPrice = null,
         distanceMeters = distance, qualityScore = null, sustainabilityLabels = emptyList(),
-        validUntil = null, imageKey = imageFor(name),
+        validUntil = null, imageKey = imageFor(name), productImageUrl = productImageUrl, storeWebsite = storeWebsite,
     )
 
     private fun request(url: String, method: String = "GET", body: ByteArray? = null): ByteArray? {
@@ -248,6 +266,7 @@ class OnDeviceCatalogRepository(
             array.put(JSONObject().apply {
                 put("id", item.id); put("name", item.productName); put("store", item.storeName)
                 put("price", item.price); put("distance", item.distanceMeters); put("image", item.imageKey.name)
+                put("productImageUrl", item.productImageUrl); put("storeWebsite", item.storeWebsite)
             })
         }
         catalogFile.writeText(array.toString())
@@ -259,12 +278,23 @@ class OnDeviceCatalogRepository(
         distanceMeters = getInt("distance"), qualityScore = null,
         sustainabilityLabels = emptyList(), validUntil = null,
         imageKey = runCatching { ProductImageKey.valueOf(getString("image")) }.getOrDefault(ProductImageKey.OTHER),
+        productImageUrl = optString("productImageUrl").takeIf(String::isNotBlank),
+        storeWebsite = optString("storeWebsite").takeIf(String::isNotBlank),
     )
 
     private fun imageFor(name: String) = when {
-        name.contains("latte", true) || name.contains("yogurt", true) || name.contains("formagg", true) -> ProductImageKey.MILK
-        name.contains("pasta", true) || name.contains("riso", true) -> ProductImageKey.PASTA
+        name.contains("yogurt", true) -> ProductImageKey.YOGURT
+        name.contains("formagg", true) || name.contains("mozzarell", true) || name.contains("parmig", true) -> ProductImageKey.CHEESE
+        name.contains("latte", true) -> ProductImageKey.MILK
+        name.contains("riso", true) -> ProductImageKey.RICE
+        name.contains("pasta", true) -> ProductImageKey.PASTA
+        listOf("legum", "fagiol", "ceci", "lenticch", "piselli").any { name.contains(it, true) } -> ProductImageKey.LEGUMES
+        name.contains("uov", true) -> ProductImageKey.EGGS
         name.contains("carne", true) || name.contains("pollo", true) -> ProductImageKey.MEAT
+        listOf("pesce", "salmone", "tonno", "merluzzo", "orata", "branzino").any { name.contains(it, true) } -> ProductImageKey.FISH
+        name.contains("caff", true) -> ProductImageKey.COFFEE
+        name.contains("acqua", true) -> ProductImageKey.WATER
+        name.contains("olio", true) -> ProductImageKey.OIL
         name.contains("pane", true) || name.contains("biscott", true) -> ProductImageKey.BAKERY
         name.contains("deters", true) || name.contains("carta", true) -> ProductImageKey.HOUSEHOLD
         name.contains("frutta", true) || name.contains("verdura", true) || name.contains("mele", true) -> ProductImageKey.PRODUCE

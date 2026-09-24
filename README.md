@@ -39,6 +39,24 @@ Gli asset sono icone originali, minimali e prive di marchi commerciali. Forme e 
     <td align="center"><img src="app/src/main/res/drawable-nodpi/product_bakery.png" alt="Categoria forno" width="220" /></td>
     <td align="center"><img src="app/src/main/res/drawable-nodpi/product_household.png" alt="Categoria casa" width="220" /></td>
   </tr>
+  <tr><th>Pesce</th><th>Riso</th><th>Legumi</th></tr>
+  <tr>
+    <td align="center"><img src="app/src/main/res/drawable-nodpi/product_fish.png" alt="Categoria pesce" width="220" /></td>
+    <td align="center"><img src="app/src/main/res/drawable-nodpi/product_rice.png" alt="Categoria riso" width="220" /></td>
+    <td align="center"><img src="app/src/main/res/drawable-nodpi/product_legumes.png" alt="Categoria legumi" width="220" /></td>
+  </tr>
+  <tr><th>Uova</th><th>Formaggio</th><th>Yogurt</th></tr>
+  <tr>
+    <td align="center"><img src="app/src/main/res/drawable-nodpi/product_eggs.png" alt="Categoria uova" width="220" /></td>
+    <td align="center"><img src="app/src/main/res/drawable-nodpi/product_cheese.png" alt="Categoria formaggio" width="220" /></td>
+    <td align="center"><img src="app/src/main/res/drawable-nodpi/product_yogurt.png" alt="Categoria yogurt" width="220" /></td>
+  </tr>
+  <tr><th>Caffè</th><th>Acqua</th><th>Olio</th></tr>
+  <tr>
+    <td align="center"><img src="app/src/main/res/drawable-nodpi/product_coffee.png" alt="Categoria caffè" width="220" /></td>
+    <td align="center"><img src="app/src/main/res/drawable-nodpi/product_water.png" alt="Categoria acqua" width="220" /></td>
+    <td align="center"><img src="app/src/main/res/drawable-nodpi/product_oil.png" alt="Categoria olio" width="220" /></td>
+  </tr>
 </table>
 
 ## Avvio
@@ -72,6 +90,8 @@ Le app dei retailer e le recensioni di Google Maps/Tripadvisor vanno acquisite s
 - immagini prodotto e indicatori di qualità/sostenibilità;
 - badge prodotto solo-icon con descrizioni accessibili a TalkBack;
 - illustrazioni minimali per categoria; immagini ufficiali del negozio solo quando il feed ne concede esplicitamente il riuso;
+- immagine specifica del prodotto dal catalogo pubblico quando disponibile, con fallback locale per categoria;
+- filtro per insegna, favicon/marchio dello store e totale stimato degli articoli ancora da acquistare;
 - filtro per distanza, carta fedeltà ed età minima;
 - profilo con carte fedeltà possedute: un'offerta riservata viene mostrata solo per la catena registrata;
 - mappa operativa con posizione, nomi reali OpenStreetMap, distanza, selezione rapida e indicazioni stradali;

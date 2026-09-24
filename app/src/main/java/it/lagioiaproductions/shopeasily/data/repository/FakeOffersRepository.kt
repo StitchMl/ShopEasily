@@ -113,17 +113,17 @@ class FakeOffersRepository : OffersRepository {
 
     private fun everydayOffers(): List<Offer> {
         val products = listOf(
-            Triple("Uova da allevamento all'aperto 6 pz", 2.49, ProductImageKey.PRODUCE),
+            Triple("Uova da allevamento all'aperto 6 pz", 2.49, ProductImageKey.EGGS),
             Triple("Mele italiane 1 kg", 1.79, ProductImageKey.PRODUCE),
             Triple("Pomodori locali 1 kg", 2.19, ProductImageKey.PRODUCE),
-            Triple("Riso italiano 1 kg", 2.39, ProductImageKey.PASTA),
-            Triple("Yogurt bianco 4 pz", 1.69, ProductImageKey.MILK),
-            Triple("Olio extravergine 1 L", 7.49, ProductImageKey.OTHER),
-            Triple("Caffè macinato 250 g", 3.29, ProductImageKey.OTHER),
-            Triple("Acqua minerale 6x1,5 L", 2.10, ProductImageKey.OTHER),
-            Triple("Formaggio stagionato 300 g", 4.90, ProductImageKey.MILK),
-            Triple("Legumi biologici 400 g", 1.15, ProductImageKey.PRODUCE),
-            Triple("Pesce fresco 1 kg", 12.90, ProductImageKey.OTHER),
+            Triple("Riso italiano 1 kg", 2.39, ProductImageKey.RICE),
+            Triple("Yogurt bianco 4 pz", 1.69, ProductImageKey.YOGURT),
+            Triple("Olio extravergine 1 L", 7.49, ProductImageKey.OIL),
+            Triple("Caffè macinato 250 g", 3.29, ProductImageKey.COFFEE),
+            Triple("Acqua minerale 6x1,5 L", 2.10, ProductImageKey.WATER),
+            Triple("Formaggio stagionato 300 g", 4.90, ProductImageKey.CHEESE),
+            Triple("Legumi biologici 400 g", 1.15, ProductImageKey.LEGUMES),
+            Triple("Pesce fresco 1 kg", 12.90, ProductImageKey.FISH),
             Triple("Detersivo ecologico 1 L", 3.60, ProductImageKey.HOUSEHOLD),
         )
         return products.mapIndexed { index, (name, price, image) ->

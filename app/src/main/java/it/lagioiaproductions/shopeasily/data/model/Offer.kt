@@ -2,9 +2,18 @@ package it.lagioiaproductions.shopeasily.data.model
 
 enum class ProductImageKey {
     MILK,
+    YOGURT,
+    CHEESE,
     PASTA,
+    RICE,
     PRODUCE,
+    LEGUMES,
+    EGGS,
     MEAT,
+    FISH,
+    COFFEE,
+    WATER,
+    OIL,
     BAKERY,
     HOUSEHOLD,
     OTHER,
@@ -36,6 +45,8 @@ data class Offer(
     val activeDays: Set<OfferDay> = OfferDay.entries.toSet(),
     val minimumAge: Int? = null,
     val flashOffer: Boolean = false,
+    val productImageUrl: String? = null,
+    val storeWebsite: String? = null,
 )
 
 fun Offer.isEligibleFor(age: Int?): Boolean = minimumAge == null || (age != null && age >= minimumAge)
