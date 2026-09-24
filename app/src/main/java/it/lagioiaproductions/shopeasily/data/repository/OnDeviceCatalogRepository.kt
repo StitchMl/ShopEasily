@@ -1,3 +1,5 @@
+@file:Suppress("SpellCheckingInspection")
+
 package it.lagioiaproductions.shopeasily.data.repository
 
 import android.content.Context
@@ -120,10 +122,10 @@ class OnDeviceCatalogRepository(
             if (!isPublicUrl(link) || !robotsAllows(link)) return@forEachIndexed
             val bytes = request(link) ?: return@forEachIndexed
             if (bytes.size > MAX_DOCUMENT_BYTES) return@forEachIndexed
-            if (link.substringBefore('?').endsWith(".pdf", true) || bytes.startsWithPdfHeader()) {
-                result += parsePdf(bytes, shop, distance, index)
+            result += if (link.substringBefore('?').endsWith(".pdf", true) || bytes.startsWithPdfHeader()) {
+                parsePdf(bytes, shop, distance, index)
             } else {
-                result += parseStructuredProducts(bytes.toString(Charsets.UTF_8), shop, distance)
+                parseStructuredProducts(bytes.toString(Charsets.UTF_8), shop, distance)
             }
         }
         return result
@@ -146,13 +148,13 @@ class OnDeviceCatalogRepository(
             walkJson(payload).forEach { product ->
                 val name = product.optString("name")
                 val offers = product.opt("offers")
-                val offer = if (offers is JSONObject) offers else (offers as? JSONArray)?.optJSONObject(0)
+                val offer = offers as? JSONObject ?: (offers as? JSONArray)?.optJSONObject(0)
                 val price = offer?.opt("price")?.toString()?.replace(',', '.')?.toDoubleOrNull()
                 val image = product.opt("image")
                 val imageUrl = (
-                    if (image is String) image
-                    else if (image is JSONArray) image.optString(0)
-                    else (image as? JSONObject)?.optString("url")
+                        image as? String
+                            ?: if (image is JSONArray) image.optString(0)
+                            else (image as? JSONObject)?.optString("url")
                     )?.takeIf { it.isNotBlank() && isPublicUrl(it) }
                 if (name.isNotBlank() && price != null) {
                     result += offer(name, shop.name, price, distance, productImageUrl = imageUrl, storeWebsite = shop.website)

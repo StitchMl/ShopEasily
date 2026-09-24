@@ -1,3 +1,5 @@
+@file:Suppress("SpellCheckingInspection")
+
 package it.lagioiaproductions.shopeasily.ui.search
 
 import android.graphics.BitmapFactory
@@ -89,7 +91,7 @@ fun SearchScreen(
             .padding(horizontal = 16.dp),
     ) {
             Row(
-                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
             ) {
                 Image(

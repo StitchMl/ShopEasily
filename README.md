@@ -1,5 +1,6 @@
 # ShopEasily
 
+<!--suppress HtmlDeprecatedAttribute, CheckImageSize -->
 <p align="center">
   <img src="app/src/main/res/drawable-nodpi/shopeasily_logo.png" alt="Logo ShopEasily: lettera E integrata con una foglia" width="220" />
 </p>
