@@ -10,11 +10,10 @@ class FakeOffersRepositoryTest {
     private val repository = FakeOffersRepository()
 
     @Test
-    fun search_filtersByProductNameAndSortsByPrice() = runBlocking {
+    fun search_filtersByProductName() = runBlocking {
         val results = repository.search("latte").first()
 
         assertEquals(3, results.size)
-        assertTrue(results.zipWithNext().all { (first, second) -> first.price <= second.price })
     }
 
     @Test

@@ -56,6 +56,6 @@ class FakeOffersRepository : OffersRepository {
             }
         }
 
-        return flowOf(result.sortedBy(Offer::price))
+        return flowOf(result)
     }
 }
