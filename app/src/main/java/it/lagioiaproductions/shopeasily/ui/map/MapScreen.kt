@@ -161,10 +161,15 @@ fun MapScreen(modifier: Modifier = Modifier) {
         val position = userLocation ?: return@LaunchedEffect
         val radius = UserPreferencesRepository(context).preferences.first().radiusKm
         isLoading = true
-        stores = runCatching {
+        val refreshedStores = runCatching {
             repository.nearbyStores(position.latitude, position.longitude, radius)
         }.getOrDefault(emptyList())
-        selectedStore = stores.firstOrNull()
+        if (refreshedStores.isNotEmpty()) {
+            stores = refreshedStores
+            selectedStore = selectedStore?.let { selected ->
+                refreshedStores.firstOrNull { it.name == selected.name }
+            } ?: refreshedStores.first()
+        }
         isLoading = false
         repository.synchronize(position.latitude, position.longitude, radius)
     }
@@ -207,9 +212,14 @@ fun MapScreen(modifier: Modifier = Modifier) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            if (isLoading) CircularProgressIndicator(modifier = Modifier.width(28.dp))
-            else IconButton(onClick = { refreshKey++ }, enabled = locationGranted) {
-                Icon(Icons.Rounded.Refresh, contentDescription = "Aggiorna negozi e offerte")
+            Box(modifier = Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                if (isLoading) {
+                    CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 3.dp)
+                } else {
+                    IconButton(onClick = { refreshKey++ }, enabled = locationGranted) {
+                        Icon(Icons.Rounded.Refresh, contentDescription = "Aggiorna negozi e offerte")
+                    }
+                }
             }
         }
 
@@ -322,7 +332,8 @@ private fun StoreLogo(store: NearbyStore) {
 }
 
 private fun loadStoreLogo(store: NearbyStore): Bitmap {
-    val favicon = store.website?.let { website ->
+    val favicon = OFFICIAL_STORE_LOGOS.entries.firstOrNull { store.name.contains(it.key, true) }?.value
+        ?: store.website?.let { website ->
         runCatching { URI(website) }.getOrNull()?.let { uri -> "${uri.scheme}://${uri.authority}/favicon.ico" }
     } ?: OFFICIAL_STORE_DOMAINS.entries.firstOrNull { store.name.contains(it.key, true) }
         ?.value?.let { "https://$it/favicon.ico" }
@@ -333,9 +344,25 @@ private fun loadStoreLogo(store: NearbyStore): Bitmap {
                 readTimeout = 8_000
                 setRequestProperty("User-Agent", "ShopEasily/0.3")
             }
-            connection.getInputStream().use(BitmapFactory::decodeStream)
+            connection.getInputStream().use(BitmapFactory::decodeStream)?.let(::normalizeLogo)
         }.getOrNull()
     } ?: initialMarker(store.name)
+}
+
+private fun normalizeLogo(source: Bitmap): Bitmap {
+    val output = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(output)
+    canvas.drawColor(Color.WHITE)
+    val scale = minOf(52f / source.width, 52f / source.height)
+    val width = source.width * scale
+    val height = source.height * scale
+    canvas.drawBitmap(
+        source,
+        null,
+        android.graphics.RectF((64 - width) / 2, (64 - height) / 2, (64 + width) / 2, (64 + height) / 2),
+        Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG),
+    )
+    return output
 }
 
 private fun initialMarker(name: String): Bitmap {
@@ -370,4 +397,7 @@ private val OFFICIAL_STORE_DOMAINS = mapOf(
     "Conad" to "www.conad.it",
     "Carrefour" to "www.carrefour.it",
     "Eurospin" to "www.eurospin.it",
+)
+private val OFFICIAL_STORE_LOGOS = mapOf(
+    "Eurospin" to "https://www.eurospin.it/wp-content/themes/eurospin/assets/images/obj/logo.png",
 )

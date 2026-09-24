@@ -316,7 +316,8 @@ private fun ProductImage(offer: Offer) {
 @Composable
 private fun StoreLogo(offer: Offer) {
     val faviconUrl = remember(offer.storeWebsite, offer.storeName) {
-        offer.storeWebsite?.let { website ->
+        OFFICIAL_STORE_LOGOS.entries.firstOrNull { offer.storeName.contains(it.key, true) }?.value
+            ?: offer.storeWebsite?.let { website ->
             runCatching { URI(website) }.getOrNull()?.let { uri -> "${uri.scheme}://${uri.authority}/favicon.ico" }
         } ?: OFFICIAL_STORE_DOMAINS.entries.firstOrNull { offer.storeName.contains(it.key, true) }
             ?.value?.let { "https://$it/favicon.ico" }
@@ -358,6 +359,9 @@ private val OFFICIAL_STORE_DOMAINS = mapOf(
     "Carrefour" to "www.carrefour.it",
     "Eurospin" to "www.eurospin.it",
     "Cortilia" to "www.cortilia.it",
+)
+private val OFFICIAL_STORE_LOGOS = mapOf(
+    "Eurospin" to "https://www.eurospin.it/wp-content/themes/eurospin/assets/images/obj/logo.png",
 )
 
 private fun SortMode.icon(): ImageVector = when (this) {
