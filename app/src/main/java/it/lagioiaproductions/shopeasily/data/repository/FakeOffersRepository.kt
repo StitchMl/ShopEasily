@@ -109,7 +109,35 @@ class FakeOffersRepository : OffersRepository {
             imageKey = ProductImageKey.BAKERY,
             activeDays = setOf(OfferDay.SATURDAY, OfferDay.SUNDAY),
         ),
-    )
+    ) + everydayOffers()
+
+    private fun everydayOffers(): List<Offer> {
+        val products = listOf(
+            Triple("Uova da allevamento all'aperto 6 pz", 2.49, ProductImageKey.PRODUCE),
+            Triple("Mele italiane 1 kg", 1.79, ProductImageKey.PRODUCE),
+            Triple("Pomodori locali 1 kg", 2.19, ProductImageKey.PRODUCE),
+            Triple("Riso italiano 1 kg", 2.39, ProductImageKey.PASTA),
+            Triple("Yogurt bianco 4 pz", 1.69, ProductImageKey.MILK),
+            Triple("Olio extravergine 1 L", 7.49, ProductImageKey.OTHER),
+            Triple("Caffè macinato 250 g", 3.29, ProductImageKey.OTHER),
+            Triple("Acqua minerale 6x1,5 L", 2.10, ProductImageKey.OTHER),
+            Triple("Formaggio stagionato 300 g", 4.90, ProductImageKey.MILK),
+            Triple("Legumi biologici 400 g", 1.15, ProductImageKey.PRODUCE),
+            Triple("Pesce fresco 1 kg", 12.90, ProductImageKey.OTHER),
+            Triple("Detersivo ecologico 1 L", 3.60, ProductImageKey.HOUSEHOLD),
+        )
+        return products.mapIndexed { index, (name, price, image) ->
+            Offer(
+                id = (100 + index).toLong(), productName = name, brand = null,
+                storeName = if (index % 2 == 0) "Supermercato Centro" else "Market Bio",
+                price = price, unitPrice = null,
+                distanceMeters = if (index % 2 == 0) 850 else 1_400,
+                qualityScore = 4.0f + (index % 5) / 10f,
+                sustainabilityLabels = if (index % 2 == 0) listOf("Filiera italiana") else listOf("Biologico"),
+                validUntil = null, imageKey = image,
+            )
+        }
+    }
 
     override fun search(query: String): Flow<List<Offer>> {
         val normalizedQuery = query.trim()

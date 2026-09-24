@@ -37,6 +37,14 @@ Gli asset sono generici e privi di marchi commerciali, così possono essere usat
 2. Esegui **Sync Project with Gradle Files**.
 3. Avvia l'app su un dispositivo o emulatore con accesso a Internet.
 
+Per collegare il catalogo raccolto automaticamente, avvia il servizio in `backend/` e imposta in `local.properties`:
+
+```properties
+BACKEND_URL=http://10.0.2.2:8000
+```
+
+`10.0.2.2` vale per l'emulatore Android. Su un telefono fisico usa l'indirizzo LAN/HTTPS del server. Quando la mappa ottiene la posizione, l'app avvia automaticamente la scoperta nel raggio scelto; la ricerca legge fino a 500 offerte normalizzate e usa il catalogo locale solo se il server non è configurato o non risponde.
+
 La mappa usa **MapLibre e OpenStreetMap** e non richiede chiavi API. La configurazione attuale dei tile pubblici è adatta allo sviluppo; prima della pubblicazione va scelto un provider con capacità e condizioni adeguate oppure un servizio ospitato direttamente.
 
 ## Backend dati
@@ -54,6 +62,7 @@ Le app dei retailer e le recensioni di Google Maps/Tripadvisor vanno acquisite s
 ## Funzioni presenti
 
 - ricerca e ranking di offerte attive nel giorno corrente;
+- scoperta automatica geografica di cataloghi pubblici, sitemap, JSON-LD e volantini PDF;
 - immagini prodotto e indicatori di qualità/sostenibilità;
 - badge prodotto solo-icon con descrizioni accessibili a TalkBack;
 - illustrazioni minimali per categoria; immagini ufficiali del negozio solo quando il feed ne concede esplicitamente il riuso;

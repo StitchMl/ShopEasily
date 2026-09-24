@@ -11,6 +11,7 @@ class ImportedOffer(BaseModel):
     valid_from: date | None = None
     valid_until: date | None = None
     loyalty_required: bool = False
+    distance_meters: int | None = None
     raw_text: str
 
 

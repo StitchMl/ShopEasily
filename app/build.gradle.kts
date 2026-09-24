@@ -1,6 +1,13 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+}
+
+val localProperties = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.exists()) file.inputStream().use(::load)
 }
 
 android {
@@ -17,6 +24,9 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        val backendUrl = localProperties.getProperty("BACKEND_URL", "")
+        buildConfigField("String", "BACKEND_URL", "\"${backendUrl.trimEnd('/')}\"")
+        buildConfigField("boolean", "BACKEND_CONFIGURED", backendUrl.isNotBlank().toString())
     }
 
     buildTypes {
@@ -31,6 +41,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_11
     }
     buildFeatures {
+        buildConfig = true
         compose = true
     }
 }

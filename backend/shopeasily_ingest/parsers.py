@@ -1,4 +1,5 @@
 import io
+import json
 import re
 from dataclasses import dataclass
 
@@ -59,3 +60,39 @@ def parse_pdf(source_id: str, url: str, store: str, content: bytes) -> list[Impo
             product_name=name[:200], price=price, raw_text=line[:1000],
         ))
     return offers
+
+
+def parse_structured_products(source_id: str, url: str, store: str, html: str) -> list[ImportedOffer]:
+    """Estrae Product/Offer JSON-LD standard senza selettori specifici del sito."""
+    soup = BeautifulSoup(html, "html.parser")
+    result: list[ImportedOffer] = []
+
+    def walk(value):
+        if isinstance(value, list):
+            for item in value:
+                yield from walk(item)
+        elif isinstance(value, dict):
+            if value.get("@type") == "Product" or "Product" in value.get("@type", []):
+                yield value
+            for child in value.values():
+                if isinstance(child, (dict, list)):
+                    yield from walk(child)
+
+    for script in soup.select('script[type="application/ld+json"]'):
+        try:
+            payload = json.loads(script.get_text(strip=True))
+        except (json.JSONDecodeError, TypeError):
+            continue
+        for product in walk(payload):
+            name = str(product.get("name", "")).strip()
+            offer = product.get("offers", {})
+            if isinstance(offer, list):
+                offer = offer[0] if offer else {}
+            price = parse_price(str(offer.get("price", "")))
+            if name and price is not None:
+                result.append(ImportedOffer(
+                    source_id=source_id, source_url=url, store=store,
+                    product_name=name[:200], price=price,
+                    loyalty_required=False, raw_text=json.dumps(product, ensure_ascii=False)[:1000],
+                ))
+    return result

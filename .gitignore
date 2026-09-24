@@ -16,4 +16,6 @@
 local.properties
 backend/.venv/
 backend/sources.yaml
+backend/catalog.json
+backend/catalog.tmp
 backend/**/__pycache__/

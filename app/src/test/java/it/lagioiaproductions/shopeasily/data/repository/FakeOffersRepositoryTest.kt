@@ -18,7 +18,7 @@ class FakeOffersRepositoryTest {
 
     @Test
     fun search_returnsNoResultsForUnknownProduct() = runBlocking {
-        val results = repository.search("caffè").first()
+        val results = repository.search("prodotto inesistente xyz").first()
 
         assertTrue(results.isEmpty())
     }

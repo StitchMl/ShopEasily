@@ -27,6 +27,9 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import it.lagioiaproductions.shopeasily.data.model.StoreChannel
 import it.lagioiaproductions.shopeasily.data.repository.FakeCatalogRepository
+import it.lagioiaproductions.shopeasily.BuildConfig
+import it.lagioiaproductions.shopeasily.data.preferences.UserPreferencesRepository
+import it.lagioiaproductions.shopeasily.data.repository.CatalogSyncRepository
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import org.maplibre.android.camera.CameraPosition
@@ -48,6 +51,7 @@ import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.geojson.Feature
 import org.maplibre.geojson.FeatureCollection
 import org.maplibre.geojson.Point
+import kotlinx.coroutines.flow.first
 
 @SuppressLint("MissingPermission")
 @Composable
@@ -133,6 +137,17 @@ fun MapScreen(modifier: Modifier = Modifier) {
         map.style?.getSourceAs<GeoJsonSource>("user-position")
             ?.setGeoJson(Point.fromLngLat(position.longitude, position.latitude))
         map.cameraPosition = CameraPosition.Builder().target(position).zoom(14.0).build()
+    }
+
+    LaunchedEffect(userLocation) {
+        val position = userLocation ?: return@LaunchedEffect
+        if (!BuildConfig.BACKEND_CONFIGURED) return@LaunchedEffect
+        val radius = UserPreferencesRepository(context).preferences.first().radiusKm
+        CatalogSyncRepository(BuildConfig.BACKEND_URL).sync(
+            latitude = position.latitude,
+            longitude = position.longitude,
+            radiusKm = radius,
+        )
     }
 
     DisposableEffect(mapView) {
