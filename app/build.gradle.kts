@@ -11,13 +11,13 @@ val localProperties = Properties().apply {
 }
 
 android {
-    namespace = "it.lagioiaproductions.shopeasly"
+    namespace = "it.lagioiaproductions.shopeasily"
     compileSdk {
         version = release(37)
     }
 
     defaultConfig {
-        applicationId = "it.lagioiaproductions.shopeasly"
+        applicationId = "it.lagioiaproductions.shopeasily"
         minSdk = 23
         targetSdk = 37
         versionCode = 1

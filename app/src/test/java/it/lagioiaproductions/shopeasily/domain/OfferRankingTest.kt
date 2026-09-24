@@ -1,0 +1,41 @@
+package it.lagioiaproductions.shopeasily.domain
+
+import it.lagioiaproductions.shopeasily.data.model.Offer
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class OfferRankingTest {
+    private val offers = listOf(
+        offer(id = 1, price = 2.0, distance = 500, sustainable = true),
+        offer(id = 2, price = 1.0, distance = 2_000, sustainable = false),
+    )
+
+    @Test
+    fun priceSortPlacesCheapestOfferFirst() {
+        val result = OfferRanking.apply(offers, SearchFilters(sortMode = SortMode.PRICE))
+
+        assertEquals(2L, result.first().id)
+    }
+
+    @Test
+    fun sustainableFilterExcludesUnlabelledOffers() {
+        val result = OfferRanking.apply(offers, SearchFilters(sustainableOnly = true))
+
+        assertTrue(result.all { it.sustainabilityLabels.isNotEmpty() })
+        assertEquals(listOf(1L), result.map(Offer::id))
+    }
+
+    private fun offer(id: Long, price: Double, distance: Int, sustainable: Boolean) = Offer(
+        id = id,
+        productName = "Prodotto $id",
+        brand = null,
+        storeName = "Negozio",
+        price = price,
+        unitPrice = price,
+        distanceMeters = distance,
+        qualityScore = 4f,
+        sustainabilityLabels = if (sustainable) listOf("Bio") else emptyList(),
+        validUntil = null,
+    )
+}

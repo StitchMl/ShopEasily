@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <lint>
-    <!-- WorkManager 2.12 requires minSdk 24; ShopEasly intentionally supports API 23. -->
+    <!-- WorkManager 2.12 requires minSdk 24; ShopEasily intentionally supports API 23. -->
     <issue id="GradleDependency">
         <ignore regexp="androidx\.work:work-runtime-ktx" />
     </issue>

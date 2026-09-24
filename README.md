@@ -1,7 +1,7 @@
-# ShopEasly
+# ShopEasily
 
 <p align="center">
-  <img src="app/src/main/res/drawable-nodpi/shopeasly_logo.png" alt="Logo ShopEasly: lettera E integrata con una foglia" width="220" />
+  <img src="app/src/main/res/drawable-nodpi/shopeasily_logo.png" alt="Logo ShopEasily: lettera E integrata con una foglia" width="220" />
 </p>
 
 <p align="center">
@@ -12,7 +12,7 @@ Prototipo Android nativo in Kotlin e Jetpack Compose per confrontare la spesa pe
 
 ## Identità visiva
 
-Il simbolo combina una **E** geometrica con una foglia. La E richiama il nome ShopEasly, mentre la foglia rappresenta prodotti freschi, attenzione ambientale e scelte di consumo responsabili. Il verde scuro comunica affidabilità e il verde brillante evidenzia la componente sostenibile.
+Il simbolo combina una **E** geometrica con una foglia. La E richiama il nome ShopEasily, mentre la foglia rappresenta prodotti freschi, attenzione ambientale e scelte di consumo responsabili. Il verde scuro comunica affidabilità e il verde brillante evidenzia la componente sostenibile.
 
 ### Immagini prodotto
 
@@ -40,7 +40,7 @@ Gli asset sono generici e privi di marchi commerciali, così possono essere usat
    MAPS_API_KEY=la_tua_chiave_maps_android
    ```
 
-3. Nella Google Cloud Console abilita **Maps SDK for Android** e limita la chiave al package `it.lagioiaproductions.shopeasly` e al certificato SHA-1 usato per la build.
+3. Nella Google Cloud Console abilita **Maps SDK for Android** e limita la chiave al package `it.lagioiaproductions.shopeasily` e al certificato SHA-1 usato per la build.
 4. Esegui **Sync Project with Gradle Files** e avvia l'app su un emulatore con Google Play Services.
 
 Senza una chiave valida le altre sezioni funzionano, ma Google Maps non può caricare le tessere.
