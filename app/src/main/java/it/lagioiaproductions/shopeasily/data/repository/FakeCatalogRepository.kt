@@ -6,12 +6,12 @@ import it.lagioiaproductions.shopeasily.data.model.StoreChannel
 
 class FakeCatalogRepository {
     val stores = listOf(
-        Store(1, "Supermercato Centro", StoreChannel.PHYSICAL, 45.4642, 9.1900, 850),
-        Store(2, "Market Bio", StoreChannel.PHYSICAL, 45.4700, 9.1810, 1_400),
-        Store(3, "Spesa Online Verde", StoreChannel.ONLINE, null, null, 0, 3.90, 0.0, 0.75, 0.78, "Valutazione dimostrativa da sostituire con audit verificato"),
-        Store(4, "Consegna Rapida", StoreChannel.ONLINE, null, null, 0, 5.90, 0.0, 1.30, null, null),
-        Store(5, "Macelleria di quartiere", StoreChannel.PHYSICAL, 45.4628, 9.1842, 650),
-        Store(6, "Mercato Verde", StoreChannel.PHYSICAL, 45.4681, 9.1941, 1_100),
+        Store(1, "Esselunga", StoreChannel.PHYSICAL, 45.4642, 9.1900, 850),
+        Store(2, "NaturaSì", StoreChannel.PHYSICAL, 45.4700, 9.1810, 1_400),
+        Store(3, "Cortilia", StoreChannel.ONLINE, null, null, 0, 3.90, 0.0, 0.75, 0.78, "Valutazione dimostrativa da sostituire con audit verificato"),
+        Store(4, "Carrefour online", StoreChannel.ONLINE, null, null, 0, 5.90, 0.0, 1.30, null, null),
+        Store(5, "Macelleria locale", StoreChannel.PHYSICAL, 45.4628, 9.1842, 650),
+        Store(6, "Mercato comunale", StoreChannel.PHYSICAL, 45.4681, 9.1941, 1_100),
     )
 
     val catalog = listOf(

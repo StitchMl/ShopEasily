@@ -41,10 +41,14 @@ import it.lagioiaproductions.shopeasily.data.preferences.FuelType
 import it.lagioiaproductions.shopeasily.data.preferences.VehicleType
 
 private val supportedLoyaltyPrograms = listOf(
-    "Supermercato Centro",
-    "Market Bio",
-    "Discount Sud",
-    "Spesa Online Verde",
+    "Esselunga",
+    "Coop",
+    "Conad",
+    "Carrefour",
+    "Lidl",
+    "Eurospin",
+    "NaturaSì",
+    "Cortilia",
 )
 
 @OptIn(ExperimentalMaterial3Api::class)

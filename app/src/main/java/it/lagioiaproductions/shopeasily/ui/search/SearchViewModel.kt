@@ -7,8 +7,7 @@ import it.lagioiaproductions.shopeasily.data.model.Offer
 import it.lagioiaproductions.shopeasily.data.repository.FakeOffersRepository
 import it.lagioiaproductions.shopeasily.data.repository.OffersRepository
 import it.lagioiaproductions.shopeasily.data.preferences.UserPreferencesRepository
-import it.lagioiaproductions.shopeasily.BuildConfig
-import it.lagioiaproductions.shopeasily.data.repository.RemoteOffersRepository
+import it.lagioiaproductions.shopeasily.data.repository.OnDeviceCatalogRepository
 import it.lagioiaproductions.shopeasily.domain.OfferRanking
 import it.lagioiaproductions.shopeasily.domain.SearchFilters
 import it.lagioiaproductions.shopeasily.domain.SortMode
@@ -27,9 +26,7 @@ data class SearchUiState(
 )
 
 class SearchViewModel(application: Application) : AndroidViewModel(application) {
-    private val repository: OffersRepository = FakeOffersRepository().let { fallback ->
-        if (BuildConfig.BACKEND_CONFIGURED) RemoteOffersRepository(BuildConfig.BACKEND_URL, fallback) else fallback
-    }
+    private val repository: OffersRepository = OnDeviceCatalogRepository(application)
     private val preferencesRepository = UserPreferencesRepository(application)
     private val _uiState = MutableStateFlow(SearchUiState())
     val uiState: StateFlow<SearchUiState> = _uiState.asStateFlow()

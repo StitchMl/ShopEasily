@@ -9,11 +9,13 @@ import androidx.work.WorkManager
 import it.lagioiaproductions.shopeasily.notifications.FlashOfferWorker
 import java.util.concurrent.TimeUnit
 import org.maplibre.android.MapLibre
+import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 
 class ShopEasilyApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         MapLibre.getInstance(this)
+        PDFBoxResourceLoader.init(this)
         scheduleFlashOfferChecks()
     }
 

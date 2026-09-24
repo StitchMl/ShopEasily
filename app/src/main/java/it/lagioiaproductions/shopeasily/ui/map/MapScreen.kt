@@ -2,14 +2,37 @@ package it.lagioiaproductions.shopeasily.ui.map
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Eco
+import androidx.compose.material.icons.rounded.LocalGroceryStore
+import androidx.compose.material.icons.rounded.LocationOff
+import androidx.compose.material.icons.rounded.MyLocation
+import androidx.compose.material.icons.rounded.Navigation
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -19,23 +42,24 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
-import it.lagioiaproductions.shopeasily.data.model.StoreChannel
-import it.lagioiaproductions.shopeasily.data.repository.FakeCatalogRepository
-import it.lagioiaproductions.shopeasily.BuildConfig
-import it.lagioiaproductions.shopeasily.data.preferences.UserPreferencesRepository
-import it.lagioiaproductions.shopeasily.data.repository.CatalogSyncRepository
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
+import it.lagioiaproductions.shopeasily.data.preferences.UserPreferencesRepository
+import it.lagioiaproductions.shopeasily.data.repository.NearbyStore
+import it.lagioiaproductions.shopeasily.data.repository.OnDeviceCatalogRepository
+import kotlinx.coroutines.flow.first
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.geometry.LatLng
-import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.MapLibreMap
+import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
 import org.maplibre.android.style.layers.CircleLayer
 import org.maplibre.android.style.layers.PropertyFactory.circleColor
@@ -51,15 +75,12 @@ import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.geojson.Feature
 import org.maplibre.geojson.FeatureCollection
 import org.maplibre.geojson.Point
-import kotlinx.coroutines.flow.first
 
 @SuppressLint("MissingPermission")
 @Composable
 fun MapScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    val stores = remember {
-        FakeCatalogRepository().stores.filter { it.channel == StoreChannel.PHYSICAL }
-    }
+    val repository = remember { OnDeviceCatalogRepository(context) }
     var locationGranted by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
@@ -67,6 +88,10 @@ fun MapScreen(modifier: Modifier = Modifier) {
         )
     }
     var userLocation by remember { mutableStateOf<LatLng?>(null) }
+    var stores by remember { mutableStateOf(emptyList<NearbyStore>()) }
+    var selectedStore by remember { mutableStateOf<NearbyStore?>(null) }
+    var isLoading by remember { mutableStateOf(false) }
+    var refreshKey by remember { mutableStateOf(0) }
     var mapInstance by remember { mutableStateOf<MapLibreMap?>(null) }
     var styleReady by remember { mutableStateOf(false) }
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -77,110 +102,194 @@ fun MapScreen(modifier: Modifier = Modifier) {
     }
     val mapView = remember {
         MapView(context).apply {
-            onCreate(null)
-            onStart()
-            onResume()
+            onCreate(null); onStart(); onResume()
             getMapAsync { map ->
                 mapInstance = map
-                map.setStyle(Style.Builder().fromUri("asset://osm_style.json")) {
-                    val features = stores.mapNotNull { store ->
-                        val latitude = store.latitude ?: return@mapNotNull null
-                        val longitude = store.longitude ?: return@mapNotNull null
-                        Feature.fromGeometry(Point.fromLngLat(longitude, latitude)).apply {
-                            addStringProperty("name", store.name)
-                        }
-                    }
-                    it.addSource(GeoJsonSource("stores", FeatureCollection.fromFeatures(features)))
-                    it.addLayer(
-                        CircleLayer("store-dots", "stores").withProperties(
-                            circleColor("#2E6B57"), circleRadius(8f),
-                            circleStrokeColor("#FFFFFF"), circleStrokeWidth(2f),
+                map.setStyle(Style.Builder().fromUri("asset://osm_style.json")) { style ->
+                    style.addSource(GeoJsonSource(STORES_SOURCE, FeatureCollection.fromFeatures(emptyArray<Feature>())))
+                    style.addLayer(
+                        CircleLayer("store-dots", STORES_SOURCE).withProperties(
+                            circleColor("#2E6B57"), circleRadius(9f),
+                            circleStrokeColor("#FFFFFF"), circleStrokeWidth(2.5f),
                         ),
                     )
-                    it.addSource(GeoJsonSource("user-position", FeatureCollection.fromFeatures(emptyArray<Feature>())))
-                    it.addLayer(
-                        CircleLayer("user-dot", "user-position").withProperties(
+                    style.addLayer(
+                        SymbolLayer("store-labels", STORES_SOURCE).withProperties(
+                            textField("{name}"), textSize(11f), textOffset(arrayOf(0f, 1.7f)),
+                            textColor("#173F34"),
+                        ),
+                    )
+                    style.addSource(GeoJsonSource(USER_SOURCE, FeatureCollection.fromFeatures(emptyArray<Feature>())))
+                    style.addLayer(
+                        CircleLayer("user-dot", USER_SOURCE).withProperties(
                             circleColor("#2F80ED"), circleRadius(9f),
                             circleStrokeColor("#FFFFFF"), circleStrokeWidth(3f),
                         ),
                     )
                     styleReady = true
-                    it.addLayer(
-                        SymbolLayer("store-labels", "stores").withProperties(
-                            textField("{name}"), textSize(12f), textOffset(arrayOf(0f, 1.5f)),
-                            textColor("#173F34"),
-                        ),
-                    )
-                    map.cameraPosition = CameraPosition.Builder()
-                        .target(LatLng(45.4642, 9.1900))
-                        .zoom(12.0)
-                        .build()
                 }
             }
         }
     }
 
-    LaunchedEffect(locationGranted) {
-        if (locationGranted) {
-            LocationServices.getFusedLocationProviderClient(context)
-                .getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
-                .addOnSuccessListener { location ->
-                    if (location != null) userLocation = LatLng(location.latitude, location.longitude)
-                }
-        }
+    LaunchedEffect(locationGranted, refreshKey) {
+        if (!locationGranted) return@LaunchedEffect
+        isLoading = true
+        LocationServices.getFusedLocationProviderClient(context)
+            .getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
+            .addOnSuccessListener { location ->
+                if (location != null) userLocation = LatLng(location.latitude, location.longitude)
+                else isLoading = false
+            }
+            .addOnFailureListener { isLoading = false }
     }
 
-    LaunchedEffect(userLocation, styleReady) {
+    LaunchedEffect(userLocation, refreshKey) {
         val position = userLocation ?: return@LaunchedEffect
-        val map = mapInstance ?: return@LaunchedEffect
-        if (!styleReady) return@LaunchedEffect
-        map.style?.getSourceAs<GeoJsonSource>("user-position")
-            ?.setGeoJson(Point.fromLngLat(position.longitude, position.latitude))
-        map.cameraPosition = CameraPosition.Builder().target(position).zoom(14.0).build()
-    }
-
-    LaunchedEffect(userLocation) {
-        val position = userLocation ?: return@LaunchedEffect
-        if (!BuildConfig.BACKEND_CONFIGURED) return@LaunchedEffect
         val radius = UserPreferencesRepository(context).preferences.first().radiusKm
-        CatalogSyncRepository(BuildConfig.BACKEND_URL).sync(
-            latitude = position.latitude,
-            longitude = position.longitude,
-            radiusKm = radius,
-        )
+        isLoading = true
+        stores = runCatching {
+            repository.nearbyStores(position.latitude, position.longitude, radius)
+        }.getOrDefault(emptyList())
+        selectedStore = stores.firstOrNull()
+        isLoading = false
+        repository.synchronize(position.latitude, position.longitude, radius)
+    }
+
+    LaunchedEffect(userLocation, stores, styleReady) {
+        if (!styleReady) return@LaunchedEffect
+        userLocation?.let { position ->
+            mapInstance?.style?.getSourceAs<GeoJsonSource>(USER_SOURCE)
+                ?.setGeoJson(Point.fromLngLat(position.longitude, position.latitude))
+            mapInstance?.cameraPosition = CameraPosition.Builder().target(position).zoom(13.5).build()
+        }
+        val features = stores.map { store ->
+            Feature.fromGeometry(Point.fromLngLat(store.longitude, store.latitude)).apply {
+                addStringProperty("name", store.name)
+            }
+        }
+        mapInstance?.style?.getSourceAs<GeoJsonSource>(STORES_SOURCE)
+            ?.setGeoJson(FeatureCollection.fromFeatures(features))
     }
 
     DisposableEffect(mapView) {
-        onDispose {
-            mapView.onPause()
-            mapView.onStop()
-            mapView.onDestroy()
-        }
+        onDispose { mapView.onPause(); mapView.onStop(); mapView.onDestroy() }
     }
 
     Column(modifier = modifier.fillMaxSize()) {
-        Text(
-            "Negozi vicini",
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(16.dp),
-        )
-        if (!locationGranted) {
-            Button(
-                onClick = {
-                    permissionLauncher.launch(
-                        arrayOf(
-                            Manifest.permission.ACCESS_FINE_LOCATION,
-                            Manifest.permission.ACCESS_COARSE_LOCATION,
-                        ),
-                    )
-                },
-                modifier = Modifier.padding(horizontal = 16.dp),
-            ) { Text("Usa la mia posizione") }
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Vicino a te", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text(
+                    if (stores.isEmpty()) "Negozi e mercati nel tuo raggio" else "${stores.size} punti vendita trovati",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (isLoading) CircularProgressIndicator(modifier = Modifier.width(28.dp))
+            else IconButton(onClick = { refreshKey++ }, enabled = locationGranted) {
+                Icon(Icons.Rounded.Refresh, contentDescription = "Aggiorna negozi e offerte")
+            }
         }
-        AndroidView(
-            factory = { mapView },
-            modifier = Modifier.fillMaxWidth().weight(1f),
-        )
+
+        if (!locationGranted) {
+            LocationPermissionCard {
+                permissionLauncher.launch(
+                    arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
+                )
+            }
+        } else {
+            Box(modifier = Modifier.fillMaxSize()) {
+                AndroidView(factory = { mapView }, modifier = Modifier.fillMaxSize())
+                FilledIconButton(
+                    onClick = {
+                        userLocation?.let {
+                            mapInstance?.cameraPosition = CameraPosition.Builder().target(it).zoom(14.5).build()
+                        }
+                    },
+                    modifier = Modifier.align(Alignment.TopEnd).padding(12.dp),
+                ) { Icon(Icons.Rounded.MyLocation, contentDescription = "Centra sulla mia posizione") }
+
+                if (!isLoading && stores.isEmpty()) {
+                    AssistChip(
+                        onClick = { refreshKey++ },
+                        label = { Text("Nessun punto vendita: riprova") },
+                        leadingIcon = { Icon(Icons.Rounded.LocationOff, contentDescription = null) },
+                        modifier = Modifier.align(Alignment.Center),
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()).padding(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    stores.take(MAX_VISIBLE_STORES).forEach { store ->
+                        StoreCard(
+                            store = store,
+                            selected = selectedStore == store,
+                            onSelect = {
+                                selectedStore = store
+                                mapInstance?.cameraPosition = CameraPosition.Builder()
+                                    .target(LatLng(store.latitude, store.longitude)).zoom(15.5).build()
+                            },
+                            onNavigate = {
+                                val uri = Uri.parse(
+                                    "geo:${store.latitude},${store.longitude}?q=${store.latitude},${store.longitude}(${Uri.encode(store.name)})",
+                                )
+                                context.startActivity(Intent(Intent.ACTION_VIEW, uri))
+                            },
+                        )
+                    }
+                }
+            }
+        }
     }
 }
+
+@Composable
+private fun LocationPermissionCard(onEnable: () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+        Column(modifier = Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(Icons.Rounded.MyLocation, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.height(8.dp))
+            Text("Attiva la posizione per vedere negozi, mercati e offerte realmente vicini.")
+            Spacer(Modifier.height(12.dp))
+            Button(onClick = onEnable) { Text("Attiva posizione") }
+        }
+    }
+}
+
+@Composable
+private fun StoreCard(store: NearbyStore, selected: Boolean, onSelect: () -> Unit, onNavigate: () -> Unit) {
+    Card(onClick = onSelect, modifier = Modifier.width(230.dp)) {
+        Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                if (store.sustainable) Icons.Rounded.Eco else Icons.Rounded.LocalGroceryStore,
+                contentDescription = if (store.sustainable) "Bio, locale o equosolidale" else null,
+                tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(store.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    distanceLabel(store.distanceMeters),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            IconButton(onClick = onNavigate) {
+                Icon(Icons.Rounded.Navigation, contentDescription = "Indicazioni per ${store.name}")
+            }
+        }
+    }
+}
+
+private fun distanceLabel(meters: Int) = if (meters < 1_000) "$meters m" else "%.1f km".format(meters / 1_000.0)
+
+private const val STORES_SOURCE = "stores"
+private const val USER_SOURCE = "user-position"
+private const val MAX_VISIBLE_STORES = 30
