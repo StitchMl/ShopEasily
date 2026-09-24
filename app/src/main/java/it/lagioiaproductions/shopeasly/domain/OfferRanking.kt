@@ -1,6 +1,10 @@
 package it.lagioiaproductions.shopeasly.domain
 
 import it.lagioiaproductions.shopeasly.data.model.Offer
+import it.lagioiaproductions.shopeasly.data.model.OfferDay
+import it.lagioiaproductions.shopeasly.data.model.isActiveOn
+import it.lagioiaproductions.shopeasly.data.model.isEligibleFor
+import java.util.Calendar
 
 enum class SortMode(val label: String) {
     SMART("Consigliati"),
@@ -14,6 +18,8 @@ data class SearchFilters(
     val sustainableOnly: Boolean = false,
     val includeLoyaltyOffers: Boolean = true,
     val maximumDistanceMeters: Int = 10_000,
+    val userAge: Int? = null,
+    val day: OfferDay = currentOfferDay(),
 )
 
 object OfferRanking {
@@ -21,7 +27,9 @@ object OfferRanking {
         val filtered = offers.filter { offer ->
             offer.distanceMeters <= filters.maximumDistanceMeters &&
                 (!filters.sustainableOnly || offer.sustainabilityLabels.isNotEmpty()) &&
-                (filters.includeLoyaltyOffers || !offer.loyaltyRequired)
+                (filters.includeLoyaltyOffers || !offer.loyaltyRequired) &&
+                offer.isActiveOn(filters.day) &&
+                offer.isEligibleFor(filters.userAge)
         }
 
         return when (filters.sortMode) {
@@ -54,4 +62,16 @@ object OfferRanking {
     }
 
     private fun Offer.unitPriceOrPrice(): Double = unitPrice ?: price
+}
+
+fun currentOfferDay(calendar: Calendar = Calendar.getInstance()): OfferDay = when (
+    calendar.get(Calendar.DAY_OF_WEEK)
+) {
+    Calendar.MONDAY -> OfferDay.MONDAY
+    Calendar.TUESDAY -> OfferDay.TUESDAY
+    Calendar.WEDNESDAY -> OfferDay.WEDNESDAY
+    Calendar.THURSDAY -> OfferDay.THURSDAY
+    Calendar.FRIDAY -> OfferDay.FRIDAY
+    Calendar.SATURDAY -> OfferDay.SATURDAY
+    else -> OfferDay.SUNDAY
 }

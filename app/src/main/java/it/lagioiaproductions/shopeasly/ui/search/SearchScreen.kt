@@ -1,5 +1,6 @@
 package it.lagioiaproductions.shopeasly.ui.search
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -8,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -24,6 +26,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.foundation.text.KeyboardOptions
@@ -32,6 +37,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import it.lagioiaproductions.shopeasly.R
 import it.lagioiaproductions.shopeasly.data.model.Offer
+import it.lagioiaproductions.shopeasly.data.model.ProductImageKey
 import it.lagioiaproductions.shopeasly.domain.SortMode
 import java.text.NumberFormat
 import java.util.Locale
@@ -48,12 +54,20 @@ fun SearchScreen(
             .fillMaxSize()
             .padding(horizontal = 16.dp),
     ) {
-            Text(
-                text = "Trova la spesa migliore",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(top = 16.dp, bottom = 4.dp),
-            )
+            Row(
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
+            ) {
+                Image(
+                    painter = painterResource(R.drawable.shopeasly_logo),
+                    contentDescription = "Logo ShopEasly",
+                    modifier = Modifier.size(48.dp),
+                )
+                Column(Modifier.padding(start = 10.dp)) {
+                    Text("ShopEasly", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    Text("Trova la spesa migliore", style = MaterialTheme.typography.titleMedium)
+                }
+            }
             Text(
                 text = "Confronta prezzi, distanza e sostenibilità",
                 style = MaterialTheme.typography.bodyLarge,
@@ -147,7 +161,16 @@ private fun OfferCard(offer: Offer) {
     val euroFormatter = NumberFormat.getCurrencyInstance(Locale.ITALY)
 
     Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Row(modifier = Modifier.padding(16.dp)) {
+            Image(
+                painter = painterResource(offer.imageKey.drawableResource()),
+                contentDescription = offer.productName,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .size(92.dp)
+                    .clip(MaterialTheme.shapes.medium),
+            )
+            Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
             Text(
                 text = offer.productName,
                 style = MaterialTheme.typography.titleMedium,
@@ -183,6 +206,20 @@ private fun OfferCard(offer: Offer) {
                     color = MaterialTheme.colorScheme.error,
                 )
             }
+            offer.minimumAge?.let { minimumAge ->
+                Text(
+                    text = "Riservata a clienti $minimumAge+",
+                    color = MaterialTheme.colorScheme.tertiary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            if (offer.flashOffer) {
+                Text("Offerta lampo", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+            }
+            Text(
+                text = "Valida: ${offer.activeDays.joinToString { it.shortLabel }}",
+                style = MaterialTheme.typography.bodySmall,
+            )
             if (offer.sustainabilityLabels.isNotEmpty()) {
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -195,6 +232,14 @@ private fun OfferCard(offer: Offer) {
             }
         }
     }
+}
+
+}
+
+private fun ProductImageKey.drawableResource(): Int = when (this) {
+    ProductImageKey.MILK -> R.drawable.product_milk
+    ProductImageKey.PASTA -> R.drawable.product_pasta
+    ProductImageKey.PRODUCE -> R.drawable.product_produce
 }
 
 private fun distanceLabel(distanceMeters: Int): String = when {
