@@ -57,6 +57,12 @@ Gli asset sono icone originali, minimali e prive di marchi commerciali. Forme e 
     <td align="center"><img src="app/src/main/res/drawable-nodpi/product_water.png" alt="Categoria acqua" width="220" /></td>
     <td align="center"><img src="app/src/main/res/drawable-nodpi/product_oil.png" alt="Categoria olio" width="220" /></td>
   </tr>
+  <tr><th>Frutta</th><th>Verdura</th><th>Ortofrutta mista</th></tr>
+  <tr>
+    <td align="center"><img src="app/src/main/res/drawable-nodpi/product_fruit.png" alt="Categoria frutta" width="220" /></td>
+    <td align="center"><img src="app/src/main/res/drawable-nodpi/product_vegetable.png" alt="Categoria verdura" width="220" /></td>
+    <td align="center"><img src="app/src/main/res/drawable-nodpi/product_produce.png" alt="Categoria ortofrutta mista" width="220" /></td>
+  </tr>
 </table>
 
 ## Avvio

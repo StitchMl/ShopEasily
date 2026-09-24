@@ -253,6 +253,8 @@ private fun ProductImageKey.drawableResource(): Int = when (this) {
     ProductImageKey.PASTA -> R.drawable.product_pasta
     ProductImageKey.RICE -> R.drawable.product_rice
     ProductImageKey.PRODUCE -> R.drawable.product_produce
+    ProductImageKey.FRUIT -> R.drawable.product_fruit
+    ProductImageKey.VEGETABLE -> R.drawable.product_vegetable
     ProductImageKey.LEGUMES -> R.drawable.product_legumes
     ProductImageKey.EGGS -> R.drawable.product_eggs
     ProductImageKey.MEAT -> R.drawable.product_meat

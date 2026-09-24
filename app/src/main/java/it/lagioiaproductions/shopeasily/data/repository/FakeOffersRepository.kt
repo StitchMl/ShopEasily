@@ -114,8 +114,8 @@ class FakeOffersRepository : OffersRepository {
     private fun everydayOffers(): List<Offer> {
         val products = listOf(
             Triple("Uova da allevamento all'aperto 6 pz", 2.49, ProductImageKey.EGGS),
-            Triple("Mele italiane 1 kg", 1.79, ProductImageKey.PRODUCE),
-            Triple("Pomodori locali 1 kg", 2.19, ProductImageKey.PRODUCE),
+            Triple("Mele italiane 1 kg", 1.79, ProductImageKey.FRUIT),
+            Triple("Pomodori locali 1 kg", 2.19, ProductImageKey.VEGETABLE),
             Triple("Riso italiano 1 kg", 2.39, ProductImageKey.RICE),
             Triple("Yogurt bianco 4 pz", 1.69, ProductImageKey.YOGURT),
             Triple("Olio extravergine 1 L", 7.49, ProductImageKey.OIL),

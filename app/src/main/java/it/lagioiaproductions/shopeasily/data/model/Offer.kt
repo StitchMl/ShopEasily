@@ -7,6 +7,8 @@ enum class ProductImageKey {
     PASTA,
     RICE,
     PRODUCE,
+    FRUIT,
+    VEGETABLE,
     LEGUMES,
     EGGS,
     MEAT,

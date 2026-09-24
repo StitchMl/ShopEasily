@@ -297,7 +297,14 @@ class OnDeviceCatalogRepository(
         name.contains("olio", true) -> ProductImageKey.OIL
         name.contains("pane", true) || name.contains("biscott", true) -> ProductImageKey.BAKERY
         name.contains("deters", true) || name.contains("carta", true) -> ProductImageKey.HOUSEHOLD
-        name.contains("frutta", true) || name.contains("verdura", true) || name.contains("mele", true) -> ProductImageKey.PRODUCE
+        listOf(
+            "frutta", "mela", "mele", "pera", "pere", "banana", "arancia", "limone", "mandarino",
+            "fragola", "ciliegia", "pesca", "albicocca", "kiwi", "uva", "melone", "anguria", "ananas",
+        ).any { name.contains(it, true) } -> ProductImageKey.FRUIT
+        listOf(
+            "verdura", "pomodor", "carota", "zucchin", "melanzan", "peperon", "patat", "cipoll",
+            "insalat", "lattuga", "broccol", "cavol", "spinac", "finocch", "sedano", "zucca",
+        ).any { name.contains(it, true) } -> ProductImageKey.VEGETABLE
         else -> ProductImageKey.OTHER
     }
 

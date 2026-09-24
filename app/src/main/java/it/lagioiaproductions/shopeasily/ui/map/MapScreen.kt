@@ -4,10 +4,17 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Typeface
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,11 +24,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Eco
-import androidx.compose.material.icons.rounded.LocalGroceryStore
 import androidx.compose.material.icons.rounded.LocationOff
 import androidx.compose.material.icons.rounded.MyLocation
 import androidx.compose.material.icons.rounded.Navigation
@@ -40,10 +47,12 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -56,6 +65,8 @@ import it.lagioiaproductions.shopeasily.data.preferences.UserPreferencesReposito
 import it.lagioiaproductions.shopeasily.data.repository.NearbyStore
 import it.lagioiaproductions.shopeasily.data.repository.OnDeviceCatalogRepository
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.maps.MapLibreMap
@@ -66,6 +77,9 @@ import org.maplibre.android.style.layers.PropertyFactory.circleColor
 import org.maplibre.android.style.layers.PropertyFactory.circleRadius
 import org.maplibre.android.style.layers.PropertyFactory.circleStrokeColor
 import org.maplibre.android.style.layers.PropertyFactory.circleStrokeWidth
+import org.maplibre.android.style.layers.PropertyFactory.iconAllowOverlap
+import org.maplibre.android.style.layers.PropertyFactory.iconImage
+import org.maplibre.android.style.layers.PropertyFactory.iconSize
 import org.maplibre.android.style.layers.PropertyFactory.textColor
 import org.maplibre.android.style.layers.PropertyFactory.textField
 import org.maplibre.android.style.layers.PropertyFactory.textOffset
@@ -75,6 +89,8 @@ import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.geojson.Feature
 import org.maplibre.geojson.FeatureCollection
 import org.maplibre.geojson.Point
+import java.net.URI
+import java.net.URL
 
 @SuppressLint("MissingPermission")
 @Composable
@@ -108,9 +124,8 @@ fun MapScreen(modifier: Modifier = Modifier) {
                 map.setStyle(Style.Builder().fromUri("asset://osm_style.json")) { style ->
                     style.addSource(GeoJsonSource(STORES_SOURCE, FeatureCollection.fromFeatures(emptyArray<Feature>())))
                     style.addLayer(
-                        CircleLayer("store-dots", STORES_SOURCE).withProperties(
-                            circleColor("#2E6B57"), circleRadius(9f),
-                            circleStrokeColor("#FFFFFF"), circleStrokeWidth(2.5f),
+                        SymbolLayer("store-marks", STORES_SOURCE).withProperties(
+                            iconImage("{logo}"), iconSize(0.55f), iconAllowOverlap(true),
                         ),
                     )
                     style.addLayer(
@@ -163,12 +178,17 @@ fun MapScreen(modifier: Modifier = Modifier) {
                 ?.setGeoJson(Point.fromLngLat(position.longitude, position.latitude))
             mapInstance?.cameraPosition = CameraPosition.Builder().target(position).zoom(13.5).build()
         }
-        val features = stores.map { store ->
+        val style = mapInstance?.style ?: return@LaunchedEffect
+        val features = stores.mapIndexed { index, store ->
+            val logoKey = "store-logo-$index"
+            val bitmap = withContext(Dispatchers.IO) { loadStoreLogo(store) }
+            style.addImage(logoKey, bitmap)
             Feature.fromGeometry(Point.fromLngLat(store.longitude, store.latitude)).apply {
                 addStringProperty("name", store.name)
+                addStringProperty("logo", logoKey)
             }
         }
-        mapInstance?.style?.getSourceAs<GeoJsonSource>(STORES_SOURCE)
+        style.getSourceAs<GeoJsonSource>(STORES_SOURCE)
             ?.setGeoJson(FeatureCollection.fromFeatures(features))
     }
 
@@ -267,14 +287,26 @@ private fun LocationPermissionCard(onEnable: () -> Unit) {
 private fun StoreCard(store: NearbyStore, selected: Boolean, onSelect: () -> Unit, onNavigate: () -> Unit) {
     Card(onClick = onSelect, modifier = Modifier.width(230.dp)) {
         Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                if (store.sustainable) Icons.Rounded.Eco else Icons.Rounded.LocalGroceryStore,
-                contentDescription = if (store.sustainable) "Bio, locale o equosolidale" else null,
-                tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            StoreLogo(store)
             Spacer(Modifier.width(10.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(store.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        store.name,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    if (store.sustainable) {
+                        Icon(
+                            Icons.Rounded.Eco,
+                            contentDescription = "Bio, locale o equosolidale",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(start = 4.dp).size(18.dp),
+                        )
+                    }
+                }
                 Text(
                     distanceLabel(store.distanceMeters),
                     style = MaterialTheme.typography.bodySmall,
@@ -288,8 +320,65 @@ private fun StoreCard(store: NearbyStore, selected: Boolean, onSelect: () -> Uni
     }
 }
 
+@Composable
+private fun StoreLogo(store: NearbyStore) {
+    val bitmap by produceState<Bitmap?>(initialValue = null, store.website, store.name) {
+        value = withContext(Dispatchers.IO) { loadStoreLogo(store) }
+    }
+    Image(
+        bitmap = (bitmap ?: initialMarker(store.name)).asImageBitmap(),
+        contentDescription = "Marchio ${store.name}",
+        modifier = Modifier.size(34.dp),
+    )
+}
+
+private fun loadStoreLogo(store: NearbyStore): Bitmap {
+    val favicon = store.website?.let { website ->
+        runCatching { URI(website) }.getOrNull()?.let { uri -> "${uri.scheme}://${uri.authority}/favicon.ico" }
+    } ?: OFFICIAL_STORE_DOMAINS.entries.firstOrNull { store.name.contains(it.key, true) }
+        ?.value?.let { "https://$it/favicon.ico" }
+    return favicon?.let { url ->
+        runCatching {
+            val connection = URL(url).openConnection().apply {
+                connectTimeout = 5_000
+                readTimeout = 8_000
+                setRequestProperty("User-Agent", "ShopEasily/0.3")
+            }
+            connection.getInputStream().use(BitmapFactory::decodeStream)
+        }.getOrNull()
+    } ?: initialMarker(store.name)
+}
+
+private fun initialMarker(name: String): Bitmap {
+    val bitmap = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+    canvas.drawCircle(
+        32f,
+        32f,
+        30f,
+        Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(46, 107, 87) },
+    )
+    val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        textSize = 34f
+        textAlign = Paint.Align.CENTER
+        typeface = Typeface.DEFAULT_BOLD
+    }
+    canvas.drawText(name.take(1).uppercase(), 32f, 44f, text)
+    return bitmap
+}
+
 private fun distanceLabel(meters: Int) = if (meters < 1_000) "$meters m" else "%.1f km".format(meters / 1_000.0)
 
 private const val STORES_SOURCE = "stores"
 private const val USER_SOURCE = "user-position"
 private const val MAX_VISIBLE_STORES = 30
+private val OFFICIAL_STORE_DOMAINS = mapOf(
+    "Esselunga" to "www.esselunga.it",
+    "NaturaSì" to "www.naturasi.it",
+    "Lidl" to "www.lidl.it",
+    "Coop" to "www.coop.it",
+    "Conad" to "www.conad.it",
+    "Carrefour" to "www.carrefour.it",
+    "Eurospin" to "www.eurospin.it",
+)
