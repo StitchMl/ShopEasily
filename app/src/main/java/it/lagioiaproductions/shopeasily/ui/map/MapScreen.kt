@@ -29,11 +29,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Eco
-import androidx.compose.material.icons.rounded.LocationOff
 import androidx.compose.material.icons.rounded.MyLocation
 import androidx.compose.material.icons.rounded.Navigation
 import androidx.compose.material.icons.rounded.Refresh
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -232,15 +230,6 @@ fun MapScreen(modifier: Modifier = Modifier) {
                     },
                     modifier = Modifier.align(Alignment.TopEnd).padding(12.dp),
                 ) { Icon(Icons.Rounded.MyLocation, contentDescription = "Centra sulla mia posizione") }
-
-                if (!isLoading && stores.isEmpty()) {
-                    AssistChip(
-                        onClick = { refreshKey++ },
-                        label = { Text("Nessun punto vendita: riprova") },
-                        leadingIcon = { Icon(Icons.Rounded.LocationOff, contentDescription = null) },
-                        modifier = Modifier.align(Alignment.Center),
-                    )
-                }
 
                 Row(
                     modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth()
