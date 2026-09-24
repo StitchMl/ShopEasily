@@ -28,7 +28,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import it.lagioiaproductions.shopeasly.R
 import it.lagioiaproductions.shopeasly.data.model.Offer
 import it.lagioiaproductions.shopeasly.domain.SortMode
 import java.text.NumberFormat
@@ -62,7 +64,7 @@ fun SearchScreen(
                 value = state.query,
                 onValueChange = viewModel::updateQuery,
                 label = { Text("Cerca un prodotto") },
-                placeholder = { Text("Latte, pasta, frutta…") },
+                placeholder = { Text(stringResource(R.string.search_hint)) },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = { viewModel.submitSearch() }),
