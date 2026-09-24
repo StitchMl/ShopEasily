@@ -272,17 +272,21 @@ class OnDeviceCatalogRepository(
         catalogFile.writeText(array.toString())
     }
 
-    private fun JSONObject.toOffer() = Offer(
-        id = getLong("id"), productName = getString("name"), brand = null,
+    private fun JSONObject.toOffer(): Offer {
+        val name = getString("name")
+        return Offer(
+        id = getLong("id"), productName = name, brand = null,
         storeName = getString("store"), price = getDouble("price"), unitPrice = null,
         distanceMeters = getInt("distance"), qualityScore = null,
         sustainabilityLabels = emptyList(), validUntil = null,
-        imageKey = runCatching { ProductImageKey.valueOf(getString("image")) }.getOrDefault(ProductImageKey.OTHER),
+        imageKey = imageFor(name),
         productImageUrl = optString("productImageUrl").takeIf(String::isNotBlank),
         storeWebsite = optString("storeWebsite").takeIf(String::isNotBlank),
     )
+    }
 
     private fun imageFor(name: String) = when {
+        name.contains("ortofrutta", true) -> ProductImageKey.PRODUCE
         name.contains("yogurt", true) -> ProductImageKey.YOGURT
         name.contains("formagg", true) || name.contains("mozzarell", true) || name.contains("parmig", true) -> ProductImageKey.CHEESE
         name.contains("latte", true) -> ProductImageKey.MILK
