@@ -467,7 +467,13 @@ private fun StoreMenu(stores: List<String>, selected: String?, onSelected: (Stri
 
 @Composable
 private fun ProductImage(offer: Offer) {
-    val bitmap by networkBitmap(offer.productImageUrl)
+    // Several flyer pages expose a generic/banner image as if it belonged to every
+    // JSON-LD product. Prefer a truthful category illustration when the parsed title
+    // is not specific enough to validate the remote image.
+    val trustedRemoteUrl = offer.productImageUrl.takeIf {
+        offer.imageKey != ProductImageKey.OTHER && offer.productName.length >= 3
+    }
+    val bitmap by networkBitmap(trustedRemoteUrl)
     if (bitmap != null) {
         Image(
             bitmap = bitmap!!.asImageBitmap(),
