@@ -20,6 +20,12 @@ object OfferTextParser {
         if (value.length !in 3..100 || value.count(Char::isLetter) < 3) return false
         if (value.split(' ').size > 12 || value.contains('€')) return false
         if (BLOCKED.any { value.contains(it, ignoreCase = true) } || IVA_WORD.containsMatchIn(value)) return false
+        // Long letter/digit blends are typically barcodes or OCR fragments
+        // (for example "PASSAELEGarR0"), not product descriptions.
+        if (value.split(Regex("[\\s/_.-]+"))
+                .any { token -> token.length >= 7 && token.any(Char::isDigit) && token.any(Char::isLetter) }
+        ) return false
+        if (value.count { it == '|' || it == '\\' || it == '[' || it == ']' } > 0) return false
         val firstLetter = value.firstOrNull(Char::isLetter) ?: return false
         return firstLetter.isUpperCase() || value == value.uppercase(Locale.ROOT)
     }

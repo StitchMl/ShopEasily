@@ -101,7 +101,11 @@ class OnDeviceCatalogRepository(
     override fun search(query: String): Flow<List<Offer>> = flow {
         migrateLegacyCacheIfNeeded()
         val sustainableStores = dao.stores().associate { it.id to it.sustainable }
-        val local = dao.activeOffers(System.currentTimeMillis()).map { entity ->
+        val cached = dao.activeOffers(System.currentTimeMillis())
+        val invalidIds = cached.filterNot { OfferTextParser.looksLikeProductName(it.productName) }.map(OfferEntity::id)
+        if (invalidIds.isNotEmpty()) dao.deleteOffers(invalidIds)
+        val invalidIdSet = invalidIds.toSet()
+        val local = cached.filter { it.id !in invalidIdSet }.map { entity ->
             entity.toOffer(sustainableStores[entity.storeId] == true)
         }.filter { offer ->
             query.isBlank() || offer.productName.contains(query, true) || offer.storeName.contains(query, true)
@@ -109,6 +113,72 @@ class OnDeviceCatalogRepository(
         val demo = if (local.isEmpty()) fallback.search(query).first() else emptyList()
         emit((local + demo).distinctBy { Triple(it.storeName, it.productName, it.price) })
     }.flowOn(Dispatchers.IO)
+
+    /**
+     * Completes a user search with ordinary shelf prices from public product
+     * pages of nearby retailers. This is intentionally query-driven: crawling
+     * an entire supermarket catalog on a phone would be wasteful and slow.
+     */
+    suspend fun enrichRegularPrices(query: String): Int = withContext(Dispatchers.IO) {
+        val normalizedQuery = query.trim().takeIf { it.length >= 2 } ?: return@withContext 0
+        val now = System.currentTimeMillis()
+        val current = dao.activeOffers(now)
+        val stores = storedStores().sortedBy(NearbyStore::distanceMeters)
+        var imported = 0
+        stores.take(MAX_QUERY_STORES).forEach storeLoop@{ shop ->
+            if (current.any { it.storeId == shop.id && matchesQuery(it.productName, normalizedQuery) }) return@storeLoop
+            val website = shop.website?.takeIf(::isPublicUrl) ?: return@storeLoop
+            productSearchLinks(website, normalizedQuery).forEach sourceLoop@{ sourceUrl ->
+                if (!robotsAllows(sourceUrl)) return@sourceLoop
+                val html = request(sourceUrl)?.toString(Charsets.UTF_8) ?: return@sourceLoop
+                val offers = parseHtmlProducts(
+                    html = html,
+                    pageUrl = sourceUrl,
+                    shop = shop,
+                    distance = shop.distanceMeters,
+                    promotional = false,
+                ).filter { matchesQuery(it.productName, normalizedQuery) }
+                    .distinctBy { it.productName.lowercase(Locale.ROOT) to it.price }
+                if (offers.isNotEmpty()) {
+                    dao.upsertOffers(offers.map { it.toEntity(shop, sourceUrl, now) })
+                    imported += offers.size
+                    return@storeLoop
+                }
+            }
+        }
+        imported
+    }
+
+    private fun productSearchLinks(website: String, query: String): List<String> {
+        val base = runCatching { URI(website) }.getOrNull() ?: return emptyList()
+        val origin = "${base.scheme}://${base.host}"
+        val encoded = URLEncoder.encode(query, Charsets.UTF_8.name())
+        val direct = listOf(
+            "$origin/search?q=$encoded",
+            "$origin/catalogsearch/result/?q=$encoded",
+            "$origin/?s=$encoded",
+        )
+        val webQuery = URLEncoder.encode("site:${base.host} $query prezzo", Charsets.UTF_8.name())
+        val indexed = request("https://html.duckduckgo.com/html/?q=$webQuery")
+            ?.toString(Charsets.UTF_8)
+            ?.let(::searchResultUrls)
+            .orEmpty()
+            .filter { runCatching { URI(it).host.equals(base.host, true) }.getOrDefault(false) }
+        return (indexed + direct).distinct().take(MAX_QUERY_PAGES)
+    }
+
+    private fun searchResultUrls(html: String): List<String> = SEARCH_RESULT_LINK.findAll(html).mapNotNull { match ->
+        val raw = match.groupValues[1].replace("&amp;", "&")
+        val encodedTarget = Regex("[?&]uddg=([^&]+)").find(raw)?.groupValues?.get(1)
+        (encodedTarget?.let { URLDecoder.decode(it, Charsets.UTF_8.name()) } ?: raw).takeIf(::isPublicUrl)
+    }.distinct().toList()
+
+    private fun matchesQuery(productName: String, query: String): Boolean {
+        val name = productName.lowercase(Locale.ROOT)
+        val tokens = query.lowercase(Locale.ROOT).split(Regex("[^a-z0-9à-ÿ]+"))
+            .filter { it.length >= 2 && it !in QUERY_STOP_WORDS }
+        return tokens.isNotEmpty() && tokens.all(name::contains)
+    }
 
     suspend fun synchronize(
         latitude: Double,
@@ -608,6 +678,9 @@ class OnDeviceCatalogRepository(
         const val MAX_DOCUMENTS_PER_STORE = 6
         const val MAX_SOURCE_PAGES_PER_STORE = 3
         const val MAX_DISCOVERED_SOURCES = 3
+        const val MAX_QUERY_STORES = 12
+        const val MAX_QUERY_PAGES = 3
+        val QUERY_STOP_WORDS = setOf("di", "da", "per", "con", "il", "la", "lo", "gli", "le")
         const val MAX_PRODUCT_DETAIL_PAGES = 12
         const val MAX_DOCUMENT_BYTES = 15 * 1024 * 1024
         const val OFFER_TTL_MILLIS = 14L * 24 * 60 * 60 * 1_000

@@ -25,14 +25,21 @@ object OcrFlyerReader {
                     try {
                         val result = Tasks.await(recognizer.process(InputImage.fromBitmap(bitmap, 0)))
                         result.textBlocks.forEachIndexed { blockIndex, block ->
-                            val parsed = OfferTextParser.parse(block.lines.flatMap { it.text.lineSequence().toList() })
-                            val bounds = block.boundingBox ?: return@forEachIndexed
-                            parsed.forEachIndexed { offerIndex, offer ->
+                            // Pair each price with its immediately preceding text
+                            // line. Using the whole OCR block mixed columns and
+                            // produced one fake product with the whole flyer image.
+                            block.lines.forEachIndexed { lineIndex, line ->
+                                val priceBounds = line.boundingBox ?: return@forEachIndexed
+                                val previous = block.lines.getOrNull(lineIndex - 1)
+                                val parsed = OfferTextParser.parse(
+                                    listOfNotNull(previous?.text, line.text),
+                                ).singleOrNull() ?: return@forEachIndexed
+                                val bounds = previous?.boundingBox?.let { union(it, priceBounds) } ?: priceBounds
                                 val crop = cropProductArea(bitmap, bounds) ?: return@forEachIndexed
-                                val file = File(outputDirectory, "${key.hashCode()}-$page-$blockIndex-$offerIndex.jpg")
+                                val file = File(outputDirectory, "${key.hashCode()}-$page-$blockIndex-$lineIndex.jpg")
                                 FileOutputStream(file).use { crop.compress(Bitmap.CompressFormat.JPEG, 86, it) }
                                 crop.recycle()
-                                add(OcrFlyerOffer(offer.productName, offer.price, file.absolutePath))
+                                add(OcrFlyerOffer(parsed.productName, parsed.price, file.absolutePath))
                             }
                         }
                     } finally {
@@ -76,4 +83,11 @@ object OcrFlyerReader {
         if (right - left < 80 || bottom - top < 80) return null
         return Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top)
     }
+
+    private fun union(first: Rect, second: Rect) = Rect(
+        minOf(first.left, second.left),
+        minOf(first.top, second.top),
+        maxOf(first.right, second.right),
+        maxOf(first.bottom, second.bottom),
+    )
 }

@@ -81,7 +81,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun submitSearch() {
-        search(_uiState.value.query)
+        search(_uiState.value.query, enrichPrices = true)
     }
 
     fun toggleCurrentPriceTarget() {
@@ -151,10 +151,13 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         search(_uiState.value.query)
     }
 
-    private fun search(query: String) {
+    private fun search(query: String, enrichPrices: Boolean = false) {
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoading = _uiState.value.offers.isEmpty())
+            _uiState.value = _uiState.value.copy(isLoading = enrichPrices || _uiState.value.offers.isEmpty())
+            if (enrichPrices && query.isNotBlank()) {
+                runCatching { repository.enrichRegularPrices(query) }
+            }
             val preferences = preferencesRepository.preferences.first()
             val filters = _uiState.value.filters.copy(
                 userAge = preferences.age,

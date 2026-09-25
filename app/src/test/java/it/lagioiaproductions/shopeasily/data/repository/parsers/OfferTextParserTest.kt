@@ -32,4 +32,9 @@ class OfferTextParserTest {
             OfferTextParser.parse(listOf("Pasta di Semola", "0,89 €")),
         )
     }
+
+    @Test
+    fun rejectsBarcodeLikeOcrGarbage() {
+        assertTrue(OfferTextParser.parse(listOf("PASSAELEGarR0", "6,45 €")).isEmpty())
+    }
 }

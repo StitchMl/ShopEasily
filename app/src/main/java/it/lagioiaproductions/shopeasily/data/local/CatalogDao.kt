@@ -36,10 +36,12 @@ interface CatalogDao {
     @Query("DELETE FROM offers WHERE storeId = :storeId")
     suspend fun deleteOffersForStore(storeId: String)
 
+    @Query("DELETE FROM offers WHERE id IN (:ids)")
+    suspend fun deleteOffers(ids: List<Long>)
+
     @Transaction
     suspend fun replaceStoreOffers(storeId: String, offers: List<OfferEntity>) {
         deleteOffersForStore(storeId)
         if (offers.isNotEmpty()) upsertOffers(offers)
     }
 }
-
