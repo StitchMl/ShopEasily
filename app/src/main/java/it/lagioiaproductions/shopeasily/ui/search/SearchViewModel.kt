@@ -50,6 +50,12 @@ data class SearchUiState(
     val reachedTargets: Int = 0,
     val unavailableSources: Int = 0,
     val watchedQuery: Boolean = false,
+    val selectedOfferIds: Set<Long> = emptySet(),
+    val manualCartItems: Int = 0,
+    val manualCartProductsTotal: Double = 0.0,
+    val manualCartFuelCost: Double = 0.0,
+    val manualCartTotal: Double = 0.0,
+    val manualCartEmissionKg: Double = 0.0,
 )
 
 class SearchViewModel(application: Application) : AndroidViewModel(application) {
@@ -80,6 +86,13 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         val price = _uiState.value.offers.minOfOrNull(Offer::price) ?: return
         priceWatch.toggleTarget(query, price)
         _uiState.value = _uiState.value.copy(watchedQuery = priceWatch.isWatched(query))
+    }
+
+    fun toggleOfferSelection(offer: Offer) {
+        viewModelScope.launch {
+            preferencesRepository.toggleManualCartOffer(offer.id)
+            search(_uiState.value.query)
+        }
     }
 
     fun selectSortMode(sortMode: SortMode) {
@@ -154,6 +167,13 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 consumptionPer100Km = preferences.consumptionPer100Km,
                 pricePerUnit = preferences.fuelPricePerUnit,
             )
+            val selectedIds = preferencesRepository.manualCartOfferIds.first()
+            val selectedOffers = allRanked.filter { it.id in selectedIds }
+            val productsTotal = selectedOffers.sumOf(Offer::price)
+            val travelKm = selectedOffers.groupBy(Offer::storeName).values.sumOf { storeOffers ->
+                (storeOffers.maxOfOrNull(Offer::distanceMeters) ?: 0) * 2.0 / 1_000.0
+            }
+            val fuelCost = travelKm * transport.costPerKm()
             val oneStop = BasketOptimizer.optimize(pendingItems, catalog, maximumStores = 1, transport = transport, goal = BasketGoal.CHEAPEST).firstOrNull()
             val bestBasket = BasketOptimizer.optimize(pendingItems, catalog, transport = transport, goal = BasketGoal.CHEAPEST).firstOrNull()
             val sustainable = BasketOptimizer.optimize(pendingItems, catalog, transport = transport, goal = BasketGoal.ECOLOGICAL).firstOrNull()
@@ -177,6 +197,12 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 reachedTargets = priceWatch.reachedTargets(allRanked),
                 unavailableSources = statuses.count { it.state != SourceState.UPDATED },
                 watchedQuery = query.isNotBlank() && priceWatch.isWatched(query),
+                selectedOfferIds = selectedIds,
+                manualCartItems = selectedOffers.size,
+                manualCartProductsTotal = productsTotal,
+                manualCartFuelCost = fuelCost,
+                manualCartTotal = productsTotal + fuelCost,
+                manualCartEmissionKg = travelKm * transport.emissionKgPerKm(),
                 isLoading = false,
             )
         }

@@ -53,6 +53,7 @@ class UserPreferencesRepository(private val context: Context) {
         val fuelType = stringPreferencesKey("fuel_type")
         val consumption = stringPreferencesKey("consumption_per_100_km")
         val fuelPrice = stringPreferencesKey("fuel_price_per_unit")
+        val manualCartOfferIds = stringSetPreferencesKey("manual_cart_offer_ids")
     }
 
     val preferences: Flow<UserPreferences> = context.shopEasilyDataStore.data.map { values ->
@@ -100,6 +101,16 @@ class UserPreferencesRepository(private val context: Context) {
 
     suspend fun setLastNotifiedOfferId(id: Long) = context.shopEasilyDataStore.edit {
         it[Keys.lastNotifiedOfferId] = id
+    }
+
+    val manualCartOfferIds: Flow<Set<Long>> = context.shopEasilyDataStore.data.map { values ->
+        values[Keys.manualCartOfferIds].orEmpty().mapNotNull(String::toLongOrNull).toSet()
+    }
+
+    suspend fun toggleManualCartOffer(id: Long) = context.shopEasilyDataStore.edit { values ->
+        val idText = id.toString()
+        val current = values[Keys.manualCartOfferIds].orEmpty()
+        values[Keys.manualCartOfferIds] = if (idText in current) current - idText else current + idText
     }
 
     suspend fun setLoyaltyCard(shopName: String, owned: Boolean) = context.shopEasilyDataStore.edit { values ->

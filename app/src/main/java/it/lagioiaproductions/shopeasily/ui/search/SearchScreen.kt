@@ -27,6 +27,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -84,6 +85,8 @@ import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.Route
 import androidx.compose.material.icons.rounded.ShoppingBasket
 import androidx.compose.material.icons.rounded.WarningAmber
+import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.LocalGasStation
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -251,7 +254,11 @@ fun SearchScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     items(items = state.offers, key = Offer::id) { offer ->
-                        OfferCard(offer)
+                        OfferCard(
+                            offer = offer,
+                            selected = offer.id in state.selectedOfferIds,
+                            onToggle = { viewModel.toggleOfferSelection(offer) },
+                        )
                     }
                     item { Spacer(Modifier.height(16.dp)) }
                 }
@@ -267,6 +274,14 @@ private fun HomeInsights(state: SearchUiState) {
         modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        Insight(Icons.Rounded.ShoppingBasket, state.manualCartTotal.let(money::format), "Selezionati")
+        Insight(Icons.Rounded.LocalGasStation, state.manualCartFuelCost.let(money::format), "Carburante")
+        val emission = if (state.manualCartEmissionKg < 1.0) {
+            "%.0f g".format(Locale.ITALY, state.manualCartEmissionKg * 1_000)
+        } else {
+            "%.1f kg".format(Locale.ITALY, state.manualCartEmissionKg)
+        }
+        Insight(Icons.Rounded.Eco, emission, "CO₂")
         Insight(Icons.Rounded.Check, "$coverage%", "Lista")
         Insight(Icons.Rounded.ShoppingBasket, state.bestBasketTotal?.let(money::format) ?: "—", "Carrello")
         Insight(Icons.Rounded.CalendarMonth, state.expiringToday.toString(), "Scade oggi")
@@ -303,10 +318,16 @@ private fun EmptyResults() {
 }
 
 @Composable
-private fun OfferCard(offer: Offer) {
+private fun OfferCard(offer: Offer, selected: Boolean, onToggle: () -> Unit) {
     val euroFormatter = NumberFormat.getCurrencyInstance(Locale.ITALY)
 
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(
+        onClick = onToggle,
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+        ),
+    ) {
         Row(modifier = Modifier.padding(16.dp)) {
             ProductImage(offer)
             Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
@@ -339,6 +360,10 @@ private fun OfferCard(offer: Offer) {
                     style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.padding(start = 6.dp),
                 )
+                if (selected) {
+                    Spacer(Modifier.weight(1f))
+                    Icon(Icons.Rounded.CheckCircle, contentDescription = "Nel carrello", tint = MaterialTheme.colorScheme.primary)
+                }
             }
             Row(
                 horizontalArrangement = Arrangement.spacedBy(7.dp),
