@@ -67,7 +67,11 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = _uiState.value.offers.isEmpty())
             val radius = preferencesRepository.preferences.first().radiusKm
-            runCatching { repository.synchronize(latitude, longitude, radius) }
+            runCatching {
+                repository.synchronize(latitude, longitude, radius) { _, _ ->
+                    search(_uiState.value.query)
+                }
+            }
             search(_uiState.value.query)
         }
     }
@@ -88,7 +92,8 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 loyaltyCards = preferences.loyaltyCards,
             )
             val allRanked = OfferRanking.apply(repository.search("").first(), filters)
-            val stores = allRanked.map(Offer::storeName).distinct().sorted()
+            val discoveredStores = repository.observeSourceStatuses().first().map { it.storeName }
+            val stores = (allRanked.map(Offer::storeName) + discoveredStores).distinct().sorted()
             val selectedStore = _uiState.value.selectedStore?.takeIf(stores::contains)
             val results = if (query.isBlank()) allRanked else OfferRanking.apply(repository.search(query).first(), filters)
             val visibleOffers = results.filter { selectedStore == null || it.storeName == selectedStore }

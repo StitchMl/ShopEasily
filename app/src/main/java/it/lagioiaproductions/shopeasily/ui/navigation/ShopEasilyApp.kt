@@ -19,6 +19,7 @@ import it.lagioiaproductions.shopeasily.ui.search.SearchScreen
 import it.lagioiaproductions.shopeasily.ui.search.SearchViewModel
 import it.lagioiaproductions.shopeasily.ui.settings.SettingsScreen
 import it.lagioiaproductions.shopeasily.ui.shoppinglist.ShoppingListScreen
+import it.lagioiaproductions.shopeasily.ui.sync.SyncStatusScreen
 
 private enum class Destination(
     val label: String,
@@ -27,6 +28,7 @@ private enum class Destination(
     SEARCH("Cerca", "⌕"),
     MAP("Mappa", "⌖"),
     LIST("Lista", "✓"),
+    DATA("Dati", "↻"),
     SETTINGS("Impostazioni", "⚙"),
 }
 
@@ -62,6 +64,7 @@ fun ShopEasilyApp() {
             )
             Destination.MAP -> MapScreen(modifier = Modifier.padding(innerPadding))
             Destination.LIST -> ShoppingListScreen(modifier = Modifier.padding(innerPadding))
+            Destination.DATA -> SyncStatusScreen(modifier = Modifier.padding(innerPadding))
             Destination.SETTINGS -> SettingsScreen(modifier = Modifier.padding(innerPadding))
         }
     }
