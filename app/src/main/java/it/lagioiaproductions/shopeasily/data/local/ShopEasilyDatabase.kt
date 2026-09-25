@@ -6,6 +6,8 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverter
 import androidx.room.TypeConverters
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 
 class CatalogConverters {
     @TypeConverter fun sourceState(value: String): SourceState = SourceState.valueOf(value)
@@ -14,7 +16,7 @@ class CatalogConverters {
 
 @Database(
     entities = [StoreEntity::class, OfferEntity::class, SourceStatusEntity::class],
-    version = 1,
+    version = 2,
     exportSchema = false,
 )
 @TypeConverters(CatalogConverters::class)
@@ -22,6 +24,12 @@ abstract class ShopEasilyDatabase : RoomDatabase() {
     abstract fun catalogDao(): CatalogDao
 
     companion object {
+        private val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE offers ADD COLUMN promotional INTEGER NOT NULL DEFAULT 1")
+            }
+        }
+
         @Volatile private var instance: ShopEasilyDatabase? = null
 
         fun get(context: Context): ShopEasilyDatabase = instance ?: synchronized(this) {
@@ -29,7 +37,7 @@ abstract class ShopEasilyDatabase : RoomDatabase() {
                 context.applicationContext,
                 ShopEasilyDatabase::class.java,
                 "shopeasily.db",
-            ).build().also { instance = it }
+            ).addMigrations(MIGRATION_1_2).build().also { instance = it }
         }
     }
 }

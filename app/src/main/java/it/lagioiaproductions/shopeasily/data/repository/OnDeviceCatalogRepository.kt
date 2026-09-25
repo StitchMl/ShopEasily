@@ -91,7 +91,7 @@ class OnDeviceCatalogRepository(
                 productName = offer.productName,
                 aliases = setOf(offer.productName.lowercase(Locale.ROOT)),
                 price = offer.price,
-                promotional = true,
+                promotional = offer.promotional,
                 ecological = store.sustainable,
             )
         }
@@ -213,7 +213,7 @@ class OnDeviceCatalogRepository(
         val homepage = request(website)?.toString(Charsets.UTF_8) ?: return emptyList()
         val links = candidateLinks(shop.name, website, homepage).take(MAX_DOCUMENTS_PER_STORE)
         val distance = distanceMeters(userLat, userLon, shop.latitude, shop.longitude)
-        val result = parseStructuredProducts(homepage, shop, distance).toMutableList()
+        val result = parseStructuredProducts(homepage, shop, distance, promotional = false).toMutableList()
         links.forEachIndexed { index, link ->
             if (!isPublicUrl(link) || !robotsAllows(link)) return@forEachIndexed
             val bytes = request(link) ?: return@forEachIndexed
@@ -221,7 +221,12 @@ class OnDeviceCatalogRepository(
             result += if (link.substringBefore('?').endsWith(".pdf", true) || bytes.startsWithPdfHeader()) {
                 parsePdf(bytes, shop, distance, index)
             } else {
-                parseStructuredProducts(bytes.toString(Charsets.UTF_8), shop, distance)
+                parseStructuredProducts(
+                    bytes.toString(Charsets.UTF_8),
+                    shop,
+                    distance,
+                    promotional = PROMOTION_PATH_HINTS.any { link.contains(it, true) },
+                )
             }
         }
         return result
@@ -233,7 +238,10 @@ class OnDeviceCatalogRepository(
 
     /** Finds public catalogue/offer pages when OpenStreetMap has no website or the main site has no parsable offers. */
     private fun discoverPublicSources(storeName: String): List<String> {
-        val query = URLEncoder.encode("$storeName offerte volantino catalogo", Charsets.UTF_8.name())
+        val query = URLEncoder.encode(
+            "$storeName prodotti prezzi spesa online offerte volantino catalogo",
+            Charsets.UTF_8.name(),
+        )
         val html = request("https://html.duckduckgo.com/html/?q=$query")?.toString(Charsets.UTF_8) ?: return emptyList()
         return SEARCH_RESULT_LINK.findAll(html).mapNotNull { match ->
             val raw = match.groupValues[1].replace("&amp;", "&")
@@ -246,7 +254,12 @@ class OnDeviceCatalogRepository(
         }.distinct().take(MAX_DISCOVERED_SOURCES).toList()
     }
 
-    private fun parseStructuredProducts(html: String, shop: NearbyStore, distance: Int): List<Offer> {
+    private fun parseStructuredProducts(
+        html: String,
+        shop: NearbyStore,
+        distance: Int,
+        promotional: Boolean,
+    ): List<Offer> {
         val result = mutableListOf<Offer>()
         JSON_LD.findAll(html).forEach { match ->
             val payload = runCatching { JSONObject(match.groupValues[1]) }.getOrNull() ?: return@forEach
@@ -262,7 +275,15 @@ class OnDeviceCatalogRepository(
                             else (image as? JSONObject)?.optString("url")
                     )?.takeIf { it.isNotBlank() && isPublicUrl(it) }
                 if (name.isNotBlank() && price != null) {
-                    result += offer(name, shop.name, price, distance, productImageUrl = imageUrl, storeWebsite = shop.website)
+                    result += offer(
+                        name,
+                        shop.name,
+                        price,
+                        distance,
+                        productImageUrl = imageUrl,
+                        storeWebsite = shop.website,
+                        promotional = promotional || offer.optString("priceValidUntil").isNotBlank(),
+                    )
                 }
             }
         }
@@ -310,11 +331,13 @@ class OnDeviceCatalogRepository(
         salt: Int = 0,
         productImageUrl: String? = null,
         storeWebsite: String? = null,
+        promotional: Boolean = true,
     ) = Offer(
         id = "$store|$name|$price|$salt".hashCode().toLong().and(0xffffffffL),
         productName = name, brand = null, storeName = store, price = price, unitPrice = null,
         distanceMeters = distance, qualityScore = null, sustainabilityLabels = emptyList(),
         validUntil = null, imageKey = imageFor(name), productImageUrl = productImageUrl, storeWebsite = storeWebsite,
+        promotional = promotional,
     )
 
     private fun request(url: String, method: String = "GET", body: ByteArray? = null): ByteArray? {
@@ -380,6 +403,7 @@ class OnDeviceCatalogRepository(
                 put("id", item.id); put("name", item.productName); put("store", item.storeName)
                 put("price", item.price); put("distance", item.distanceMeters); put("image", item.imageKey.name)
                 put("productImageUrl", item.productImageUrl); put("storeWebsite", item.storeWebsite)
+                put("promotional", item.promotional)
             })
         }
         catalogFile.writeText(array.toString())
@@ -395,6 +419,7 @@ class OnDeviceCatalogRepository(
             imageKey = imageFor(name),
             productImageUrl = optString("productImageUrl").takeIf(String::isNotBlank),
             storeWebsite = optString("storeWebsite").takeIf(String::isNotBlank),
+            promotional = optBoolean("promotional", true),
         )
     }
 
@@ -460,6 +485,7 @@ class OnDeviceCatalogRepository(
             confidence = if (productImageUrl != null) 0.92 else 0.72,
             observedAt = now,
             expiresAt = now + OFFER_TTL_MILLIS,
+            promotional = promotional,
         )
     }
 
@@ -477,6 +503,7 @@ class OnDeviceCatalogRepository(
         imageKey = imageFor(productName),
         productImageUrl = productImageUrl,
         storeWebsite = storeWebsite,
+        promotional = promotional,
     )
 
     private fun imageFor(name: String) = when {
@@ -525,5 +552,6 @@ class OnDeviceCatalogRepository(
         const val OFFER_TTL_MILLIS = 14L * 24 * 60 * 60 * 1_000
         val JSON_LD = Regex("""<script[^>]*type=["']application/ld\+json["'][^>]*>(.*?)</script>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
         val SEARCH_RESULT_LINK = Regex("""href=["']([^"']*(?:uddg=|https?%3A%2F%2F)[^"']*)["']""", RegexOption.IGNORE_CASE)
+        val PROMOTION_PATH_HINTS = setOf("offert", "promo", "volantin", "scont")
     }
 }

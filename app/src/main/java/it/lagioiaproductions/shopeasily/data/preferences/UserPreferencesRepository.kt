@@ -113,6 +113,10 @@ class UserPreferencesRepository(private val context: Context) {
         values[Keys.manualCartOfferIds] = if (idText in current) current - idText else current + idText
     }
 
+    suspend fun clearManualCart() = context.shopEasilyDataStore.edit { values ->
+        values.remove(Keys.manualCartOfferIds)
+    }
+
     suspend fun setLoyaltyCard(shopName: String, owned: Boolean) = context.shopEasilyDataStore.edit { values ->
         val cards = values[Keys.loyaltyCards].orEmpty()
         values[Keys.loyaltyCards] = if (owned) cards + shopName else cards - shopName

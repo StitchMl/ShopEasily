@@ -49,6 +49,7 @@ data class Offer(
     val flashOffer: Boolean = false,
     val productImageUrl: String? = null,
     val storeWebsite: String? = null,
+    val promotional: Boolean = true,
 )
 
 fun Offer.isEligibleFor(age: Int?): Boolean = minimumAge == null || (age != null && age >= minimumAge)

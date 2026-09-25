@@ -56,6 +56,7 @@ data class SearchUiState(
     val manualCartFuelCost: Double = 0.0,
     val manualCartTotal: Double = 0.0,
     val manualCartEmissionKg: Double = 0.0,
+    val showSelectedOnly: Boolean = false,
 )
 
 class SearchViewModel(application: Application) : AndroidViewModel(application) {
@@ -91,6 +92,19 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     fun toggleOfferSelection(offer: Offer) {
         viewModelScope.launch {
             preferencesRepository.toggleManualCartOffer(offer.id)
+            search(_uiState.value.query)
+        }
+    }
+
+    fun toggleSelectedOnly() {
+        _uiState.value = _uiState.value.copy(showSelectedOnly = !_uiState.value.showSelectedOnly)
+        search(_uiState.value.query)
+    }
+
+    fun clearManualCart() {
+        viewModelScope.launch {
+            preferencesRepository.clearManualCart()
+            _uiState.value = _uiState.value.copy(showSelectedOnly = false)
             search(_uiState.value.query)
         }
     }
@@ -151,7 +165,11 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
             val stores = (allRanked.map(Offer::storeName) + discoveredStores).distinct().sorted()
             val selectedStore = _uiState.value.selectedStore?.takeIf(stores::contains)
             val results = if (query.isBlank()) allRanked else OfferRanking.apply(repository.search(query).first(), filters)
-            val visibleOffers = results.filter { selectedStore == null || it.storeName == selectedStore }
+            val selectedIds = preferencesRepository.manualCartOfferIds.first()
+            val visibleOffers = results.filter { offer ->
+                (selectedStore == null || offer.storeName == selectedStore) &&
+                    (!_uiState.value.showSelectedOnly || offer.id in selectedIds)
+            }
             val pendingItems = preferencesRepository.shoppingItems.first().filterNot { it.second }.map { it.first }
             val totalCandidates = allRanked.filter { selectedStore == null || it.storeName == selectedStore }
             val matchedPrices = pendingItems.mapNotNull { requested ->
@@ -167,7 +185,6 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 consumptionPer100Km = preferences.consumptionPer100Km,
                 pricePerUnit = preferences.fuelPricePerUnit,
             )
-            val selectedIds = preferencesRepository.manualCartOfferIds.first()
             val selectedOffers = allRanked.filter { it.id in selectedIds }
             val productsTotal = selectedOffers.sumOf(Offer::price)
             val travelKm = selectedOffers.groupBy(Offer::storeName).values.sumOf { storeOffers ->

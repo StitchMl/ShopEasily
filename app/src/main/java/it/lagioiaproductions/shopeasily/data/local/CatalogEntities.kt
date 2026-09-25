@@ -40,6 +40,7 @@ data class OfferEntity(
     val confidence: Double,
     val observedAt: Long,
     val expiresAt: Long,
+    val promotional: Boolean = true,
 )
 
 @Entity(tableName = "source_status")
@@ -53,4 +54,3 @@ data class SourceStatusEntity(
     val offerCount: Int,
     val detail: String?,
 )
-

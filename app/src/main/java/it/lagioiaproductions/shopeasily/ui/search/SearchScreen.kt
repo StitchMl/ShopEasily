@@ -17,9 +17,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
@@ -87,6 +89,8 @@ import androidx.compose.material.icons.rounded.ShoppingBasket
 import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.LocalGasStation
+import androidx.compose.material.icons.rounded.DeleteSweep
+import androidx.compose.material.icons.rounded.LocalOffer
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -245,6 +249,29 @@ fun SearchScreen(
                 )
             }
 
+            if (state.manualCartItems > 0) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    IconToggleButton(
+                        checked = state.showSelectedOnly,
+                        onCheckedChange = { viewModel.toggleSelectedOnly() },
+                    ) {
+                        Icon(
+                            Icons.Rounded.ShoppingBasket,
+                            contentDescription = if (state.showSelectedOnly) "Mostra tutti i prodotti" else "Mostra solo i prodotti selezionati",
+                            tint = if (state.showSelectedOnly) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                    Text(state.manualCartItems.toString(), style = MaterialTheme.typography.labelLarge)
+                    IconButton(onClick = viewModel::clearManualCart) {
+                        Icon(Icons.Rounded.DeleteSweep, contentDescription = "Svuota prodotti selezionati")
+                    }
+                }
+            }
+
             Spacer(Modifier.height(8.dp))
 
             when {
@@ -369,6 +396,7 @@ private fun OfferCard(offer: Offer, selected: Boolean, onToggle: () -> Unit) {
                 horizontalArrangement = Arrangement.spacedBy(7.dp),
                 modifier = Modifier.padding(top = 8.dp),
             ) {
+                if (offer.promotional) ProductBadge(Icons.Rounded.LocalOffer, "Prezzo in offerta")
                 offer.qualityScore?.let { score ->
                     ProductBadge(Icons.Rounded.Star, "Qualità ${"%.1f".format(Locale.ITALY, score)} su 5")
                 }
@@ -418,7 +446,11 @@ private fun StoreMenu(stores: List<String>, selected: String?, onSelected: (Stri
                 tint = if (selected != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
             )
         }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.widthIn(min = 190.dp, max = 300.dp).heightIn(max = 300.dp),
+        ) {
             DropdownMenuItem(
                 text = { Text("Tutti") },
                 onClick = { onSelected(null); expanded = false },
