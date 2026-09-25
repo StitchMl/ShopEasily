@@ -21,6 +21,8 @@ data class BasketAssignment(
     val catalogItem: CatalogPrice,
 )
 
+enum class BasketGoal { CHEAPEST, QUALITY, ECOLOGICAL, FAIR_TRADE, BALANCED }
+
 data class BasketPlan(
     val assignments: List<BasketAssignment>,
     val stores: List<Store>,
@@ -32,6 +34,11 @@ data class BasketPlan(
 ) {
     val monetaryTotal: Double = productsTotal + serviceCosts + estimatedTravelCost
     val unavailableItems: Int = assignments.count { it.catalogItem.price.isNaN() }
+    val averageQuality: Double = assignments.mapNotNull { it.catalogItem.qualityScore }.average().let {
+        if (it.isNaN()) 0.0 else it
+    }
+    val ecologicalItems: Int = assignments.count { it.catalogItem.ecological }
+    val fairTradeItems: Int = assignments.count { it.catalogItem.fairTrade }
 }
 
 object BasketOptimizer {
@@ -40,6 +47,7 @@ object BasketOptimizer {
         catalog: List<CatalogPrice>,
         maximumStores: Int = 2,
         transport: TransportProfile = TransportProfile(),
+        goal: BasketGoal = BasketGoal.BALANCED,
     ): List<BasketPlan> {
         if (requestedItems.isEmpty()) return emptyList()
         val stores = catalog.map(CatalogPrice::store).distinctBy(Store::id)
@@ -52,11 +60,8 @@ object BasketOptimizer {
         }
 
         val sortedPlans = storeSets.mapNotNull { selectedStores ->
-            buildPlan(requestedItems, catalog, selectedStores, transport)
-        }.sortedWith(
-            compareBy<BasketPlan> { it.unavailableItems }
-                .thenBy { it.monetaryTotal + it.ethicalRiskPenalty },
-        )
+            buildPlan(requestedItems, catalog, selectedStores, transport, goal)
+        }.sortedWith(comparator(goal))
         val recommended = sortedPlans.take(3)
         val bestOnline = sortedPlans.firstOrNull { plan ->
             plan.stores.any { it.channel == StoreChannel.ONLINE }
@@ -69,11 +74,12 @@ object BasketOptimizer {
         catalog: List<CatalogPrice>,
         stores: List<Store>,
         transport: TransportProfile,
+        goal: BasketGoal,
     ): BasketPlan? {
         val available = catalog.filter { candidate -> candidate.store in stores }
         val assignments = requestedItems.mapNotNull { requested ->
             available.filter { candidate -> candidate.matches(requested) }
-                .minByOrNull(CatalogPrice::price)
+                .let { candidates -> selectCandidate(candidates, goal) }
                 ?.let { BasketAssignment(requested, it) }
         }
         if (assignments.size != requestedItems.size) return null
@@ -99,6 +105,33 @@ object BasketOptimizer {
             estimatedEmissionKgCo2 = deliveryEmissions + physicalRoundTripKm * transport.emissionKgPerKm(),
             ethicalRiskPenalty = laborPenalty,
         )
+    }
+
+    private fun selectCandidate(candidates: List<CatalogPrice>, goal: BasketGoal): CatalogPrice? = when (goal) {
+        BasketGoal.CHEAPEST -> candidates.minByOrNull(CatalogPrice::price)
+        BasketGoal.QUALITY -> candidates.maxWithOrNull(compareBy<CatalogPrice> { it.qualityScore ?: 0.0 }.thenByDescending { -it.price })
+        BasketGoal.ECOLOGICAL -> candidates.maxWithOrNull(compareBy<CatalogPrice> { it.ecological }.thenBy { it.qualityScore ?: 0.0 }.thenByDescending { -it.price })
+        BasketGoal.FAIR_TRADE -> candidates.maxWithOrNull(compareBy<CatalogPrice> { it.fairTrade }.thenBy { it.qualityScore ?: 0.0 }.thenByDescending { -it.price })
+        BasketGoal.BALANCED -> candidates.minByOrNull { candidate ->
+            candidate.price - (candidate.qualityScore ?: 0.0) * 0.08 -
+                (if (candidate.ecological) 0.18 else 0.0) - (if (candidate.fairTrade) 0.18 else 0.0)
+        }
+    }
+
+    private fun comparator(goal: BasketGoal): Comparator<BasketPlan> {
+        val completeFirst = compareBy<BasketPlan> { it.unavailableItems }
+        return when (goal) {
+            BasketGoal.CHEAPEST -> completeFirst.thenBy(BasketPlan::monetaryTotal)
+            BasketGoal.QUALITY -> completeFirst.thenByDescending(BasketPlan::averageQuality).thenBy(BasketPlan::monetaryTotal)
+            BasketGoal.ECOLOGICAL -> completeFirst.thenByDescending(BasketPlan::ecologicalItems)
+                .thenBy(BasketPlan::estimatedEmissionKgCo2).thenBy(BasketPlan::monetaryTotal)
+            BasketGoal.FAIR_TRADE -> completeFirst.thenByDescending(BasketPlan::fairTradeItems)
+                .thenBy(BasketPlan::ethicalRiskPenalty).thenBy(BasketPlan::monetaryTotal)
+            BasketGoal.BALANCED -> completeFirst.thenBy { plan ->
+                plan.monetaryTotal + plan.ethicalRiskPenalty + plan.estimatedEmissionKgCo2 * 0.15 -
+                    plan.averageQuality * 0.15 - plan.ecologicalItems * 0.18 - plan.fairTradeItems * 0.18
+            }
+        }
     }
 
     private fun CatalogPrice.matches(requested: String): Boolean {

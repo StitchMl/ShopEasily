@@ -25,4 +25,7 @@ data class CatalogPrice(
     val aliases: Set<String>,
     val price: Double,
     val promotional: Boolean,
+    val qualityScore: Double? = null,
+    val ecological: Boolean = false,
+    val fairTrade: Boolean = false,
 )

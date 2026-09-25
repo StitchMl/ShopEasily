@@ -7,6 +7,14 @@ import it.lagioiaproductions.shopeasily.data.model.Offer
 import it.lagioiaproductions.shopeasily.data.repository.FakeOffersRepository
 import it.lagioiaproductions.shopeasily.data.preferences.UserPreferencesRepository
 import it.lagioiaproductions.shopeasily.data.repository.OnDeviceCatalogRepository
+import it.lagioiaproductions.shopeasily.data.repository.PriceWatchRepository
+import it.lagioiaproductions.shopeasily.domain.BasketGoal
+import it.lagioiaproductions.shopeasily.domain.BasketOptimizer
+import it.lagioiaproductions.shopeasily.domain.TransportProfile
+import it.lagioiaproductions.shopeasily.data.local.SourceState
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import it.lagioiaproductions.shopeasily.domain.OfferRanking
 import it.lagioiaproductions.shopeasily.domain.SearchFilters
 import it.lagioiaproductions.shopeasily.domain.SortMode
@@ -14,7 +22,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlin.math.asin
+import kotlin.math.cos
+import kotlin.math.pow
+import kotlin.math.sin
+import kotlin.math.sqrt
 
 data class SearchUiState(
     val query: String = "",
@@ -26,13 +40,28 @@ data class SearchUiState(
     val shoppingTotal: Double = 0.0,
     val matchedShoppingItems: Int = 0,
     val pendingShoppingItems: Int = 0,
+    val oneStopTotal: Double? = null,
+    val bestBasketTotal: Double? = null,
+    val sustainableTotal: Double? = null,
+    val nearbyOffers: Int = 0,
+    val expiringToday: Int = 0,
+    val priceDrops: Int = 0,
+    val historicalLows: Int = 0,
+    val reachedTargets: Int = 0,
+    val unavailableSources: Int = 0,
+    val watchedQuery: Boolean = false,
 )
 
 class SearchViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = OnDeviceCatalogRepository(application)
     private val preferencesRepository = UserPreferencesRepository(application)
+    private val priceWatch = PriceWatchRepository(application)
     private val _uiState = MutableStateFlow(SearchUiState())
     val uiState: StateFlow<SearchUiState> = _uiState.asStateFlow()
+    private var searchJob: Job? = null
+    private var locationRefreshJob: Job? = null
+    private var lastRefreshLocation: Pair<Double, Double>? = null
+    private var lastRefreshAt: Long = 0L
 
     init {
         search("")
@@ -44,6 +73,13 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
 
     fun submitSearch() {
         search(_uiState.value.query)
+    }
+
+    fun toggleCurrentPriceTarget() {
+        val query = _uiState.value.query.trim()
+        val price = _uiState.value.offers.minOfOrNull(Offer::price) ?: return
+        priceWatch.toggleTarget(query, price)
+        _uiState.value = _uiState.value.copy(watchedQuery = priceWatch.isWatched(query))
     }
 
     fun selectSortMode(sortMode: SortMode) {
@@ -64,13 +100,18 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun refreshForLocation(latitude: Double, longitude: Double) {
-        viewModelScope.launch {
+        val now = System.currentTimeMillis()
+        val previous = lastRefreshLocation
+        val movedMeters = previous?.let { distanceMeters(it.first, it.second, latitude, longitude) }
+        if (previous != null && movedMeters != null && movedMeters < 500 && now - lastRefreshAt < 15 * 60_000L) return
+        if (locationRefreshJob?.isActive == true) return
+        lastRefreshLocation = latitude to longitude
+        lastRefreshAt = now
+        locationRefreshJob = viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = _uiState.value.offers.isEmpty())
             val radius = preferencesRepository.preferences.first().radiusKm
             runCatching {
-                repository.synchronize(latitude, longitude, radius) { _, _ ->
-                    search(_uiState.value.query)
-                }
+                repository.synchronize(latitude, longitude, radius) { _, _ -> }
             }
             search(_uiState.value.query)
         }
@@ -82,8 +123,9 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun search(query: String) {
-        viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoading = true)
+        searchJob?.cancel()
+        searchJob = viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isLoading = _uiState.value.offers.isEmpty())
             val preferences = preferencesRepository.preferences.first()
             val filters = _uiState.value.filters.copy(
                 userAge = preferences.age,
@@ -105,6 +147,18 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                         requested.contains(offer.productName.substringBefore(' '), ignoreCase = true)
                 }.minOfOrNull(Offer::price)
             }
+            val catalog = repository.catalogPrices()
+            val transport = TransportProfile(
+                vehicle = preferences.vehicleType,
+                fuel = preferences.fuelType,
+                consumptionPer100Km = preferences.consumptionPer100Km,
+                pricePerUnit = preferences.fuelPricePerUnit,
+            )
+            val oneStop = BasketOptimizer.optimize(pendingItems, catalog, maximumStores = 1, transport = transport, goal = BasketGoal.CHEAPEST).firstOrNull()
+            val bestBasket = BasketOptimizer.optimize(pendingItems, catalog, transport = transport, goal = BasketGoal.CHEAPEST).firstOrNull()
+            val sustainable = BasketOptimizer.optimize(pendingItems, catalog, transport = transport, goal = BasketGoal.ECOLOGICAL).firstOrNull()
+            val statuses = repository.observeSourceStatuses().first()
+            val drops = priceWatch.recordAndFindDrops(allRanked)
             _uiState.value = _uiState.value.copy(
                 offers = visibleOffers,
                 filters = filters,
@@ -113,8 +167,27 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 shoppingTotal = matchedPrices.sum(),
                 matchedShoppingItems = matchedPrices.size,
                 pendingShoppingItems = pendingItems.size,
+                oneStopTotal = oneStop?.monetaryTotal,
+                bestBasketTotal = bestBasket?.monetaryTotal,
+                sustainableTotal = sustainable?.monetaryTotal,
+                nearbyOffers = allRanked.count { it.distanceMeters <= 2_000 },
+                expiringToday = allRanked.count { it.validUntil == SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).format(Date()) },
+                priceDrops = drops.drops.size,
+                historicalLows = drops.historicalLows,
+                reachedTargets = priceWatch.reachedTargets(allRanked),
+                unavailableSources = statuses.count { it.state != SourceState.UPDATED },
+                watchedQuery = query.isNotBlank() && priceWatch.isWatched(query),
                 isLoading = false,
             )
         }
+    }
+
+    private fun distanceMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+        val earthRadius = 6_371_000.0
+        val dLat = Math.toRadians(lat2 - lat1)
+        val dLon = Math.toRadians(lon2 - lon1)
+        val a = sin(dLat / 2).pow(2) + cos(Math.toRadians(lat1)) *
+            cos(Math.toRadians(lat2)) * sin(dLon / 2).pow(2)
+        return 2 * earthRadius * asin(sqrt(a))
     }
 }

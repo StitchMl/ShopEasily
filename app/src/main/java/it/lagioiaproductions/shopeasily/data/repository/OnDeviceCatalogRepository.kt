@@ -24,6 +24,7 @@ import java.net.HttpURLConnection
 import java.net.InetAddress
 import java.net.URI
 import java.net.URLEncoder
+import java.net.URLDecoder
 import java.net.URL
 import java.util.Locale
 import kotlin.math.atan2
@@ -91,6 +92,7 @@ class OnDeviceCatalogRepository(
                 aliases = setOf(offer.productName.lowercase(Locale.ROOT)),
                 price = offer.price,
                 promotional = true,
+                ecological = store.sustainable,
             )
         }
     }
@@ -116,20 +118,34 @@ class OnDeviceCatalogRepository(
         dao.deleteExpired(now)
         var importedCount = 0
         shops.forEachIndexed { index, shop ->
-            val website = shop.website
-            if (website.isNullOrBlank()) {
+            val sources = (shop.website?.let(::listOf) ?: discoverPublicSources(shop.name))
+                .distinct().take(MAX_SOURCE_PAGES_PER_STORE)
+            if (sources.isEmpty()) {
                 dao.upsertStatus(shop.status(SourceState.UNAVAILABLE, now, 0, "Sito non indicato"))
                 onProgress(index + 1, shops.size)
                 return@forEachIndexed
             }
-            dao.upsertStatus(shop.status(SourceState.PENDING, now, 0, null))
-            val result = runCatching { scanShop(shop, latitude, longitude) }
+            val resolvedShop = shop.copy(website = sources.first())
+            dao.upsertStores(listOf(resolvedShop.toEntity(now)))
+            dao.upsertStatus(resolvedShop.status(SourceState.PENDING, now, 0, null))
+            val result = runCatching {
+                val initial = sources.flatMap { source -> scanShop(resolvedShop.copy(website = source), latitude, longitude) }
+                val fallbackSources = if (initial.isEmpty() && shop.website != null) {
+                    discoverPublicSources(shop.name).filterNot(sources::contains).take(MAX_DISCOVERED_SOURCES)
+                } else {
+                    emptyList()
+                }
+                (initial + fallbackSources.flatMap { source ->
+                    scanShop(resolvedShop.copy(website = source), latitude, longitude)
+                })
+                    .distinctBy { Triple(it.productName.lowercase(Locale.ROOT), it.price, it.storeName) }
+            }
             result.onSuccess { offers ->
-                val entities = offers.map { it.toEntity(shop, website, now) }
+                val entities = offers.map { it.toEntity(resolvedShop, it.storeWebsite ?: sources.first(), now) }
                 dao.replaceStoreOffers(shop.id, entities)
                 importedCount += entities.size
                 dao.upsertStatus(
-                    shop.status(
+                    resolvedShop.status(
                         if (entities.isEmpty()) SourceState.NO_OFFERS else SourceState.UPDATED,
                         now,
                         entities.size,
@@ -137,7 +153,7 @@ class OnDeviceCatalogRepository(
                     ),
                 )
             }.onFailure { error ->
-                dao.upsertStatus(shop.status(SourceState.UNAVAILABLE, now, 0, error.javaClass.simpleName))
+                dao.upsertStatus(resolvedShop.status(SourceState.UNAVAILABLE, now, 0, error.javaClass.simpleName))
             }
             onProgress(index + 1, shops.size)
         }
@@ -213,6 +229,21 @@ class OnDeviceCatalogRepository(
 
     private fun candidateLinks(storeName: String, base: String, html: String): List<String> {
         return ChainSourceAdapters.forStore(storeName, base).candidateLinks(base, html)
+    }
+
+    /** Finds public catalogue/offer pages when OpenStreetMap has no website or the main site has no parsable offers. */
+    private fun discoverPublicSources(storeName: String): List<String> {
+        val query = URLEncoder.encode("$storeName offerte volantino catalogo", Charsets.UTF_8.name())
+        val html = request("https://html.duckduckgo.com/html/?q=$query")?.toString(Charsets.UTF_8) ?: return emptyList()
+        return SEARCH_RESULT_LINK.findAll(html).mapNotNull { match ->
+            val raw = match.groupValues[1].replace("&amp;", "&")
+            val encodedTarget = Regex("[?&]uddg=([^&]+)").find(raw)?.groupValues?.get(1)
+            val target = encodedTarget?.let { URLDecoder.decode(it, Charsets.UTF_8.name()) } ?: raw
+            target.takeIf(::isPublicUrl)
+        }.filterNot { url ->
+            val host = runCatching { URI(url).host.orEmpty() }.getOrDefault("")
+            host.contains("duckduckgo.com") || host.contains("facebook.com") || host.contains("instagram.com")
+        }.distinct().take(MAX_DISCOVERED_SOURCES).toList()
     }
 
     private fun parseStructuredProducts(html: String, shop: NearbyStore, distance: Int): List<Offer> {
@@ -488,8 +519,11 @@ class OnDeviceCatalogRepository(
         const val OVERPASS_URL = "https://overpass-api.de/api/interpreter"
         const val USER_AGENT = "ShopEasily/0.2 (+https://github.com/StitchMl/ShopEasily)"
         const val MAX_DOCUMENTS_PER_STORE = 6
+        const val MAX_SOURCE_PAGES_PER_STORE = 3
+        const val MAX_DISCOVERED_SOURCES = 3
         const val MAX_DOCUMENT_BYTES = 15 * 1024 * 1024
         const val OFFER_TTL_MILLIS = 14L * 24 * 60 * 60 * 1_000
         val JSON_LD = Regex("""<script[^>]*type=["']application/ld\+json["'][^>]*>(.*?)</script>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+        val SEARCH_RESULT_LINK = Regex("""href=["']([^"']*(?:uddg=|https?%3A%2F%2F)[^"']*)["']""", RegexOption.IGNORE_CASE)
     }
 }

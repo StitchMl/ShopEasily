@@ -19,6 +19,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardActions
@@ -59,6 +62,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.TrendingDown
+import androidx.compose.material.icons.automirrored.rounded.ShowChart
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.CalendarMonth
@@ -74,6 +79,11 @@ import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.Storefront
 import androidx.compose.material.icons.rounded.WbSunny
+import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.FavoriteBorder
+import androidx.compose.material.icons.rounded.Route
+import androidx.compose.material.icons.rounded.ShoppingBasket
+import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -166,6 +176,16 @@ fun SearchScreen(
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = { viewModel.submitSearch() }),
+                trailingIcon = {
+                    if (state.query.isNotBlank() && state.offers.isNotEmpty()) {
+                        IconButton(onClick = viewModel::toggleCurrentPriceTarget) {
+                            Icon(
+                                if (state.watchedQuery) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                                contentDescription = "Avvisami quando il prezzo scende sotto quello attuale",
+                            )
+                        }
+                    }
+                },
                 modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
             )
 
@@ -179,6 +199,10 @@ fun SearchScreen(
             }
 
             Spacer(Modifier.height(16.dp))
+
+            HomeInsights(state)
+
+            Spacer(Modifier.height(8.dp))
 
             Row(
                 modifier = Modifier.padding(vertical = 4.dp),
@@ -221,7 +245,7 @@ fun SearchScreen(
             Spacer(Modifier.height(8.dp))
 
             when {
-                state.isLoading -> CircularProgressIndicator()
+                state.isLoading && state.offers.isEmpty() -> CircularProgressIndicator()
                 state.offers.isEmpty() -> EmptyResults()
                 else -> LazyColumn(
                     verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -232,6 +256,41 @@ fun SearchScreen(
                     item { Spacer(Modifier.height(16.dp)) }
                 }
             }
+    }
+}
+
+@Composable
+private fun HomeInsights(state: SearchUiState) {
+    val money = NumberFormat.getCurrencyInstance(Locale.ITALY)
+    val coverage = if (state.pendingShoppingItems == 0) 0 else state.matchedShoppingItems * 100 / state.pendingShoppingItems
+    Row(
+        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Insight(Icons.Rounded.Check, "$coverage%", "Lista")
+        Insight(Icons.Rounded.ShoppingBasket, state.bestBasketTotal?.let(money::format) ?: "—", "Carrello")
+        Insight(Icons.Rounded.CalendarMonth, state.expiringToday.toString(), "Scade oggi")
+        Insight(Icons.AutoMirrored.Rounded.TrendingDown, state.priceDrops.toString(), "In calo")
+        Insight(Icons.AutoMirrored.Rounded.ShowChart, state.historicalLows.toString(), "Minimi")
+        Insight(Icons.Rounded.NearMe, state.nearbyOffers.toString(), "Vicino")
+        Insight(Icons.Rounded.Storefront, state.oneStopTotal?.let(money::format) ?: "—", "1 fermata")
+        Insight(Icons.Rounded.Eco, state.sustainableTotal?.let(money::format) ?: "—", "Eco")
+        Insight(Icons.Rounded.WarningAmber, state.unavailableSources.toString(), "Fonti")
+        Insight(Icons.Rounded.Favorite, state.reachedTargets.toString(), "Obiettivi")
+    }
+}
+
+@Composable
+private fun Insight(icon: ImageVector, value: String, label: String) {
+    Card(modifier = Modifier.width(104.dp)) {
+        Column(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Icon(icon, contentDescription = label, modifier = Modifier.size(19.dp))
+            Text(value, fontWeight = FontWeight.Bold, maxLines = 1)
+            Text(label, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+        }
     }
 }
 

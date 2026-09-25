@@ -6,30 +6,35 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.Icon
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Home
+import androidx.compose.material.icons.rounded.Map
+import androidx.compose.material.icons.rounded.Checklist
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.lifecycle.viewmodel.compose.viewModel
 import it.lagioiaproductions.shopeasily.ui.map.MapScreen
 import it.lagioiaproductions.shopeasily.ui.search.SearchScreen
 import it.lagioiaproductions.shopeasily.ui.search.SearchViewModel
 import it.lagioiaproductions.shopeasily.ui.settings.SettingsScreen
 import it.lagioiaproductions.shopeasily.ui.shoppinglist.ShoppingListScreen
-import it.lagioiaproductions.shopeasily.ui.sync.SyncStatusScreen
 
 private enum class Destination(
     val label: String,
-    val symbol: String,
+    val icon: ImageVector,
+    val description: String,
 ) {
-    SEARCH("Cerca", "⌕"),
-    MAP("Mappa", "⌖"),
-    LIST("Lista", "✓"),
-    DATA("Dati", "↻"),
-    SETTINGS("Impostazioni", "⚙"),
+    SEARCH("Home", Icons.Rounded.Home, "Home e ricerca"),
+    MAP("Mappa", Icons.Rounded.Map, "Mappa dei negozi"),
+    LIST("Lista", Icons.Rounded.Checklist, "Lista della spesa"),
+    SETTINGS("Altro", Icons.Rounded.Settings, "Impostazioni"),
 }
 
 @Composable
@@ -44,14 +49,8 @@ fun ShopEasilyApp() {
                     NavigationBarItem(
                         selected = destination == item,
                         onClick = { destination = item },
-                        icon = {
-                            Text(
-                                text = item.symbol,
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Bold,
-                            )
-                        },
-                        label = { Text(item.label) },
+                        icon = { Icon(item.icon, contentDescription = item.description) },
+                        label = { Text(item.label, maxLines = 1, style = MaterialTheme.typography.labelSmall) },
                     )
                 }
             }
@@ -64,7 +63,6 @@ fun ShopEasilyApp() {
             )
             Destination.MAP -> MapScreen(modifier = Modifier.padding(innerPadding))
             Destination.LIST -> ShoppingListScreen(modifier = Modifier.padding(innerPadding))
-            Destination.DATA -> SyncStatusScreen(modifier = Modifier.padding(innerPadding))
             Destination.SETTINGS -> SettingsScreen(modifier = Modifier.padding(innerPadding))
         }
     }
