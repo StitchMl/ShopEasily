@@ -101,8 +101,9 @@ class VehicleEfficiencyRepository {
         } finally {
             connection.disconnect()
         }
-        europeanCache = parsed
-        return parsed
+        val complete = (parsed + BUILTIN_EUROPEAN_FALLBACK).distinctBy(EuropeanVehicle::slug)
+        europeanCache = complete
+        return complete
     }
 
     private fun encode(value: String) = URLEncoder.encode(value, Charsets.UTF_8.name())
@@ -123,5 +124,21 @@ class VehicleEfficiencyRepository {
     private companion object {
         const val EUROPEAN_DATA_URL = "https://autoseeker.eu/data/models.json"
         @Volatile var europeanCache: List<EuropeanVehicle>? = null
+        val BUILTIN_EUROPEAN_FALLBACK = listOf(
+            EuropeanVehicle("renault-modus-12-16v-2011", "Renault", "Modus", "1.2 16V 75 CV · benzina", 2008, 2012, 5.9, null),
+            EuropeanVehicle("renault-modus-12-tce-2011", "Renault", "Modus", "1.2 TCe 100 CV · benzina", 2008, 2012, 5.9, null),
+            EuropeanVehicle("renault-modus-15-dci-70-2011", "Renault", "Modus", "1.5 dCi 70 CV · diesel", 2008, 2012, 4.3, null),
+            EuropeanVehicle("renault-modus-15-dci-90-2011", "Renault", "Modus", "1.5 dCi 90 CV eco² · diesel", 2010, 2012, 4.1, null),
+            EuropeanVehicle("renault-grand-modus-15-dci-90-2011", "Renault", "Grand Modus", "1.5 dCi 90 CV eco² · diesel", 2010, 2012, 4.1, null),
+            EuropeanVehicle("renault-clio-v", "Renault", "Clio", "V TCe 90", 2019, null, 5.2, null),
+            EuropeanVehicle("renault-captur-ii", "Renault", "Captur", "II E-Tech full hybrid", 2019, null, 4.7, null),
+            EuropeanVehicle("renault-austral", "Renault", "Austral", "E-Tech full hybrid 200", 2022, null, 4.7, null),
+            EuropeanVehicle("renault-arkana", "Renault", "Arkana", "E-Tech full hybrid", 2021, null, 4.8, null),
+            EuropeanVehicle("renault-megane-e-tech", "Renault", "Megane E-Tech", "EV60", 2022, null, null, 16.1),
+            EuropeanVehicle("renault-5-e-tech", "Renault", "5 E-Tech", "52 kWh", 2024, null, null, 14.9),
+            EuropeanVehicle("renault-4-e-tech", "Renault", "4 E-Tech", "52 kWh", 2025, null, null, 15.1),
+            EuropeanVehicle("renault-scenic-e-tech", "Renault", "Scenic E-Tech", "87 kWh", 2024, null, null, 16.8),
+            EuropeanVehicle("renault-espace-vi", "Renault", "Espace", "VI E-Tech full hybrid", 2023, null, 4.8, null),
+        )
     }
 }

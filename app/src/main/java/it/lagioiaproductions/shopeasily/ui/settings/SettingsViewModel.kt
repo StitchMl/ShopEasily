@@ -36,6 +36,14 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             val current = repository.preferences.first()
             refreshFuelPrice(current.fuelType)
         }
+        viewModelScope.launch {
+            val year = _vehicleLookup.value.year
+            _vehicleLookup.value = _vehicleLookup.value.copy(loading = true)
+            _vehicleLookup.value = _vehicleLookup.value.copy(
+                makes = vehicleEfficiency.makes(year),
+                loading = false,
+            )
+        }
     }
 
     fun setAge(age: Int?) = viewModelScope.launch { repository.setAge(age) }

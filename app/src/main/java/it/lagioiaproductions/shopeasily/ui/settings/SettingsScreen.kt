@@ -68,6 +68,7 @@ fun SettingsScreen(
     var fuelMenuOpen by remember { mutableStateOf(false) }
     var yearMenuOpen by remember { mutableStateOf(false) }
     var makeMenuOpen by remember { mutableStateOf(false) }
+    var makeQuery by remember(vehicleLookup.make) { mutableStateOf(vehicleLookup.make.orEmpty()) }
     var modelMenuOpen by remember { mutableStateOf(false) }
     var optionMenuOpen by remember { mutableStateOf(false) }
     var consumptionText by remember(preferences.consumptionPer100Km) {
@@ -179,14 +180,16 @@ fun SettingsScreen(
                         modifier = Modifier.weight(0.62f),
                     ) {
                         OutlinedTextField(
-                            value = vehicleLookup.make.orEmpty(), onValueChange = {}, readOnly = true,
+                            value = makeQuery,
+                            onValueChange = { makeQuery = it; makeMenuOpen = true },
                             label = { Text("Marca") },
                             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(makeMenuOpen) },
-                            modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
+                            modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryEditable).fillMaxWidth(),
                         )
                         ExposedDropdownMenu(makeMenuOpen, { makeMenuOpen = false }, modifier = Modifier.heightIn(max = 300.dp)) {
-                            vehicleLookup.makes.forEach { make ->
+                            vehicleLookup.makes.filter { it.contains(makeQuery, ignoreCase = true) }.forEach { make ->
                                 DropdownMenuItem(text = { Text(make) }, onClick = {
+                                    makeQuery = make
                                     viewModel.selectVehicleMake(make); makeMenuOpen = false
                                 })
                             }
