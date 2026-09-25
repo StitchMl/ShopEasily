@@ -27,7 +27,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -91,6 +90,7 @@ import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.LocalGasStation
 import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.LocalOffer
+import androidx.compose.material.icons.rounded.Search
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -102,6 +102,7 @@ import it.lagioiaproductions.shopeasily.R
 import it.lagioiaproductions.shopeasily.data.model.Offer
 import it.lagioiaproductions.shopeasily.data.model.ProductImageKey
 import it.lagioiaproductions.shopeasily.domain.SortMode
+import it.lagioiaproductions.shopeasily.domain.ProductImageMatcher
 import it.lagioiaproductions.shopeasily.domain.sustainabilityScore
 import it.lagioiaproductions.shopeasily.ui.common.StoreLogoResolver
 import java.text.NumberFormat
@@ -164,53 +165,54 @@ fun SearchScreen(
     ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp),
             ) {
                 Image(
                     painter = painterResource(R.drawable.shopeasily_logo),
                     contentDescription = "Logo ShopEasily",
-                    modifier = Modifier.size(48.dp),
+                    modifier = Modifier.size(38.dp),
                 )
-                Column(Modifier.padding(start = 10.dp)) {
-                    Text("ShopEasily", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                Text(
+                    "ShopEasily",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(start = 8.dp),
+                )
+                Spacer(Modifier.weight(1f))
+                HeaderMetric(Icons.Rounded.ShoppingBasket, NumberFormat.getCurrencyInstance(Locale.ITALY).format(state.manualCartProductsTotal))
+                HeaderMetric(Icons.Rounded.LocalGasStation, NumberFormat.getCurrencyInstance(Locale.ITALY).format(state.manualCartFuelCost))
+                HeaderMetric(Icons.Rounded.Eco, "${(state.manualCartEmissionKg * 1_000).toInt()} g")
+            }
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = state.query,
+                    onValueChange = viewModel::updateQuery,
+                    placeholder = { Text(stringResource(R.string.search_hint)) },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { viewModel.submitSearch() }),
+                    trailingIcon = {
+                        if (state.query.isNotBlank() && state.offers.isNotEmpty()) {
+                            IconButton(onClick = viewModel::toggleCurrentPriceTarget) {
+                                Icon(
+                                    if (state.watchedQuery) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                                    contentDescription = "Avvisami quando il prezzo scende sotto quello attuale",
+                                )
+                            }
+                        }
+                    },
+                    modifier = Modifier.weight(1f),
+                )
+                IconButton(
+                    onClick = viewModel::submitSearch,
+                    modifier = Modifier.padding(start = 4.dp).size(48.dp),
+                ) {
+                    Icon(Icons.Rounded.Search, contentDescription = "Cerca")
                 }
             }
 
-            OutlinedTextField(
-                value = state.query,
-                onValueChange = viewModel::updateQuery,
-                label = { Text("Cerca un prodotto") },
-                placeholder = { Text(stringResource(R.string.search_hint)) },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = { viewModel.submitSearch() }),
-                trailingIcon = {
-                    if (state.query.isNotBlank() && state.offers.isNotEmpty()) {
-                        IconButton(onClick = viewModel::toggleCurrentPriceTarget) {
-                            Icon(
-                                if (state.watchedQuery) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                                contentDescription = "Avvisami quando il prezzo scende sotto quello attuale",
-                            )
-                        }
-                    }
-                },
-                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-            )
-
-            Button(
-                onClick = viewModel::submitSearch,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp),
-            ) {
-                Text("Cerca")
-            }
-
-            Spacer(Modifier.height(16.dp))
-
-            HomeInsights(state)
-
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(4.dp))
 
             Row(
                 modifier = Modifier.padding(vertical = 4.dp),
@@ -287,12 +289,32 @@ fun SearchScreen(
                             offer = offer,
                             selected = offer.id in state.selectedOfferIds,
                             showSustainabilityScore = state.filters.sustainableOnly,
+                            allowLegacyImage = offer.productImageUrl?.let { imageUrl ->
+                                imageUrl !in state.ambiguousImageUrls &&
+                                    ProductImageMatcher.matchesLegacyImage(offer.productName, imageUrl)
+                            } == true,
                             onToggle = { viewModel.toggleOfferSelection(offer) },
                         )
                     }
                     item { Spacer(Modifier.height(16.dp)) }
                 }
             }
+    }
+}
+
+@Composable
+private fun HeaderMetric(icon: ImageVector, value: String) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(start = 7.dp),
+    ) {
+        Icon(icon, contentDescription = null, modifier = Modifier.size(15.dp))
+        Text(
+            text = value,
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 1,
+            modifier = Modifier.padding(start = 2.dp),
+        )
     }
 }
 
@@ -352,6 +374,7 @@ private fun OfferCard(
     offer: Offer,
     selected: Boolean,
     showSustainabilityScore: Boolean,
+    allowLegacyImage: Boolean,
     onToggle: () -> Unit,
 ) {
     val euroFormatter = NumberFormat.getCurrencyInstance(Locale.ITALY)
@@ -364,7 +387,7 @@ private fun OfferCard(
         ),
     ) {
         Row(modifier = Modifier.padding(16.dp)) {
-            ProductImage(offer)
+            ProductImage(offer, allowLegacyImage)
             Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
             Text(
                 text = offer.productName,
@@ -522,12 +545,13 @@ private fun StoreFilterLogo(storeName: String, website: String?) {
 }
 
 @Composable
-private fun ProductImage(offer: Offer) {
+private fun ProductImage(offer: Offer, allowLegacyImage: Boolean) {
     // Several flyer pages expose a generic/banner image as if it belonged to every
     // JSON-LD product. Prefer a truthful category illustration when the parsed title
     // is not specific enough to validate the remote image.
     val trustedRemoteUrl = offer.productImageUrl.takeIf {
-        (offer.productImageVerified || offer.imageKey != ProductImageKey.OTHER) && offer.productName.length >= 3
+        (offer.productImageVerified || offer.imageKey != ProductImageKey.OTHER || allowLegacyImage) &&
+            offer.productName.length >= 3
     }
     val bitmap by networkBitmap(trustedRemoteUrl)
     if (bitmap != null) {

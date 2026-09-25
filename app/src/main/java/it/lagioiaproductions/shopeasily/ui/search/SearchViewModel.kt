@@ -58,6 +58,7 @@ data class SearchUiState(
     val manualCartTotal: Double = 0.0,
     val manualCartEmissionKg: Double = 0.0,
     val showSelectedOnly: Boolean = false,
+    val ambiguousImageUrls: Set<String> = emptySet(),
 )
 
 class SearchViewModel(application: Application) : AndroidViewModel(application) {
@@ -226,6 +227,10 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 manualCartFuelCost = fuelCost,
                 manualCartTotal = productsTotal + fuelCost,
                 manualCartEmissionKg = travelKm * transport.emissionKgPerKm(),
+                ambiguousImageUrls = allRanked.filter { !it.productImageUrl.isNullOrBlank() }
+                    .groupBy { it.productImageUrl!! }
+                    .filterValues { offers -> offers.map { it.productName.lowercase(Locale.ROOT) }.distinct().size > 1 }
+                    .keys,
                 isLoading = false,
             )
         }

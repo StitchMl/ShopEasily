@@ -21,7 +21,7 @@ import kotlinx.coroutines.launch
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = UserPreferencesRepository(application)
     private val fuelPrices = FuelPriceRepository()
-    private val vehicleEfficiency = VehicleEfficiencyRepository()
+    private val vehicleEfficiency = VehicleEfficiencyRepository(application)
     private val _vehicleLookup = MutableStateFlow(VehicleLookupState())
     val vehicleLookup = _vehicleLookup.asStateFlow()
 
