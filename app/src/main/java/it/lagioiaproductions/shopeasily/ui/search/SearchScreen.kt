@@ -570,6 +570,9 @@ private fun networkBitmap(url: String?) = produceState<android.graphics.Bitmap?>
     value = url?.let {
         withContext(Dispatchers.IO) {
             runCatching {
+                if (!it.startsWith("http://") && !it.startsWith("https://")) {
+                    return@runCatching BitmapFactory.decodeFile(it.removePrefix("file://"))
+                }
                 val connection = URL(it).openConnection().apply {
                     connectTimeout = 5_000
                     readTimeout = 8_000

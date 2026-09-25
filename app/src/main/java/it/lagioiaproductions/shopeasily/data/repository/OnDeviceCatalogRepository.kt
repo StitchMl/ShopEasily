@@ -344,11 +344,27 @@ class OnDeviceCatalogRepository(
     private fun parsePdf(bytes: ByteArray, shop: NearbyStore, distance: Int, documentIndex: Int): List<Offer> =
         runCatching {
             PDDocument.load(bytes).use { document ->
+                val ocrOffers = OcrFlyerReader.readOffers(
+                    document = document,
+                    outputDirectory = context.filesDir.resolve("flyer_product_images"),
+                    key = "${shop.id}-$documentIndex",
+                ).mapIndexed { index, parsed ->
+                    offer(
+                        name = parsed.productName,
+                        store = shop.name,
+                        price = parsed.price,
+                        distance = distance,
+                        salt = documentIndex * 1_000 + index,
+                        productImageUrl = parsed.imagePath,
+                        storeWebsite = shop.website,
+                        promotional = true,
+                        productImageVerified = true,
+                    )
+                }
+                if (ocrOffers.isNotEmpty()) return@use ocrOffers
                 val embedded = PDFTextStripper().getText(document).lineSequence()
                     .map(String::trim).filter(String::isNotBlank).toList()
-                parseOfferLines(embedded, shop, distance, documentIndex).ifEmpty {
-                    parseOfferLines(OcrFlyerReader.read(document), shop, distance, documentIndex)
-                }
+                parseOfferLines(embedded, shop, distance, documentIndex)
             }
         }.getOrDefault(emptyList())
 
