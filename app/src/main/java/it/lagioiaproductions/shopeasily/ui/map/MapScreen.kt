@@ -5,11 +5,6 @@ import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.Canvas
-import android.graphics.Color
-import android.graphics.Paint
-import android.graphics.Typeface
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -62,6 +57,7 @@ import com.google.android.gms.location.Priority
 import it.lagioiaproductions.shopeasily.data.preferences.UserPreferencesRepository
 import it.lagioiaproductions.shopeasily.data.repository.NearbyStore
 import it.lagioiaproductions.shopeasily.data.repository.OnDeviceCatalogRepository
+import it.lagioiaproductions.shopeasily.ui.common.StoreLogoResolver
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -87,8 +83,6 @@ import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.geojson.Feature
 import org.maplibre.geojson.FeatureCollection
 import org.maplibre.geojson.Point
-import java.net.URI
-import java.net.URL
 
 @SuppressLint("MissingPermission")
 @Composable
@@ -184,7 +178,7 @@ fun MapScreen(modifier: Modifier = Modifier) {
         val style = mapInstance?.style ?: return@LaunchedEffect
         val features = stores.mapIndexed { index, store ->
             val logoKey = "store-logo-$index"
-            val bitmap = withContext(Dispatchers.IO) { loadStoreLogo(store) }
+            val bitmap = withContext(Dispatchers.IO) { StoreLogoResolver.load(store.name, store.website) }
             style.addImage(logoKey, bitmap)
             Feature.fromGeometry(Point.fromLngLat(store.longitude, store.latitude)).apply {
                 addStringProperty("name", store.name)
@@ -197,6 +191,25 @@ fun MapScreen(modifier: Modifier = Modifier) {
 
     DisposableEffect(mapView) {
         onDispose { mapView.onPause(); mapView.onStop(); mapView.onDestroy() }
+    }
+
+    DisposableEffect(mapInstance, stores, styleReady) {
+        val map = mapInstance
+        if (map == null || !styleReady) return@DisposableEffect onDispose { }
+        val listener = MapLibreMap.OnMapClickListener { coordinate ->
+            val screenPoint = map.projection.toScreenLocation(coordinate)
+            val storeName = map.queryRenderedFeatures(screenPoint, "store-marks", "store-labels")
+                .firstOrNull()?.getStringProperty("name")
+            val store = stores.firstOrNull { it.name == storeName }
+            if (store != null) {
+                openNavigation(context, store)
+                true
+            } else {
+                false
+            }
+        }
+        map.addOnMapClickListener(listener)
+        onDispose { map.removeOnMapClickListener(listener) }
     }
 
     Column(modifier = modifier.fillMaxSize()) {
@@ -256,10 +269,7 @@ fun MapScreen(modifier: Modifier = Modifier) {
                                     .target(LatLng(store.latitude, store.longitude)).zoom(15.5).build()
                             },
                             onNavigate = {
-                                val uri = Uri.parse(
-                                    "geo:${store.latitude},${store.longitude}?q=${store.latitude},${store.longitude}(${Uri.encode(store.name)})",
-                                )
-                                context.startActivity(Intent(Intent.ACTION_VIEW, uri))
+                                openNavigation(context, store)
                             },
                         )
                     }
@@ -267,6 +277,18 @@ fun MapScreen(modifier: Modifier = Modifier) {
             }
         }
     }
+}
+
+private fun openNavigation(context: android.content.Context, store: NearbyStore) {
+    val uri = Uri.parse(
+        "google.navigation:q=${store.latitude},${store.longitude}&mode=d",
+    )
+    val intent = Intent(Intent.ACTION_VIEW, uri).apply { setPackage("com.google.android.apps.maps") }
+    val fallback = Intent(
+        Intent.ACTION_VIEW,
+        Uri.parse("geo:${store.latitude},${store.longitude}?q=${store.latitude},${store.longitude}(${Uri.encode(store.name)})"),
+    )
+    context.startActivity(if (intent.resolveActivity(context.packageManager) != null) intent else fallback)
 }
 
 @Composable
@@ -322,66 +344,13 @@ private fun StoreCard(store: NearbyStore, selected: Boolean, onSelect: () -> Uni
 @Composable
 private fun StoreLogo(store: NearbyStore) {
     val bitmap by produceState<Bitmap?>(initialValue = null, store.website, store.name) {
-        value = withContext(Dispatchers.IO) { loadStoreLogo(store) }
+        value = withContext(Dispatchers.IO) { StoreLogoResolver.load(store.name, store.website) }
     }
     Image(
-        bitmap = (bitmap ?: initialMarker(store.name)).asImageBitmap(),
+        bitmap = (bitmap ?: StoreLogoResolver.initialMarker(store.name)).asImageBitmap(),
         contentDescription = "Marchio ${store.name}",
         modifier = Modifier.size(34.dp),
     )
-}
-
-private fun loadStoreLogo(store: NearbyStore): Bitmap {
-    val favicon = OFFICIAL_STORE_LOGOS.entries.firstOrNull { store.name.contains(it.key, true) }?.value
-        ?: store.website?.let { website ->
-        runCatching { URI(website) }.getOrNull()?.let { uri -> "${uri.scheme}://${uri.authority}/favicon.ico" }
-    } ?: OFFICIAL_STORE_DOMAINS.entries.firstOrNull { store.name.contains(it.key, true) }
-        ?.value?.let { "https://$it/favicon.ico" }
-    return favicon?.let { url ->
-        runCatching {
-            val connection = URL(url).openConnection().apply {
-                connectTimeout = 5_000
-                readTimeout = 8_000
-                setRequestProperty("User-Agent", "ShopEasily/0.3")
-            }
-            connection.getInputStream().use(BitmapFactory::decodeStream)?.let(::normalizeLogo)
-        }.getOrNull()
-    } ?: initialMarker(store.name)
-}
-
-private fun normalizeLogo(source: Bitmap): Bitmap {
-    val output = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
-    val canvas = Canvas(output)
-    canvas.drawColor(Color.WHITE)
-    val scale = minOf(52f / source.width, 52f / source.height)
-    val width = source.width * scale
-    val height = source.height * scale
-    canvas.drawBitmap(
-        source,
-        null,
-        android.graphics.RectF((64 - width) / 2, (64 - height) / 2, (64 + width) / 2, (64 + height) / 2),
-        Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG),
-    )
-    return output
-}
-
-private fun initialMarker(name: String): Bitmap {
-    val bitmap = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
-    val canvas = Canvas(bitmap)
-    canvas.drawCircle(
-        32f,
-        32f,
-        30f,
-        Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(46, 107, 87) },
-    )
-    val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
-        textSize = 34f
-        textAlign = Paint.Align.CENTER
-        typeface = Typeface.DEFAULT_BOLD
-    }
-    canvas.drawText(name.take(1).uppercase(), 32f, 44f, text)
-    return bitmap
 }
 
 private fun distanceLabel(meters: Int) = if (meters < 1_000) "$meters m" else "%.1f km".format(meters / 1_000.0)
@@ -389,15 +358,3 @@ private fun distanceLabel(meters: Int) = if (meters < 1_000) "$meters m" else "%
 private const val STORES_SOURCE = "stores"
 private const val USER_SOURCE = "user-position"
 private const val MAX_VISIBLE_STORES = 30
-private val OFFICIAL_STORE_DOMAINS = mapOf(
-    "Esselunga" to "www.esselunga.it",
-    "NaturaSì" to "www.naturasi.it",
-    "Lidl" to "www.lidl.it",
-    "Coop" to "www.coop.it",
-    "Conad" to "www.conad.it",
-    "Carrefour" to "www.carrefour.it",
-    "Eurospin" to "www.eurospin.it",
-)
-private val OFFICIAL_STORE_LOGOS = mapOf(
-    "Eurospin" to "https://www.eurospin.it/wp-content/themes/eurospin/assets/images/obj/logo.png",
-)

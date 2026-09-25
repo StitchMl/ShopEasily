@@ -5,7 +5,6 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import it.lagioiaproductions.shopeasily.data.model.Offer
 import it.lagioiaproductions.shopeasily.data.repository.FakeOffersRepository
-import it.lagioiaproductions.shopeasily.data.repository.OffersRepository
 import it.lagioiaproductions.shopeasily.data.preferences.UserPreferencesRepository
 import it.lagioiaproductions.shopeasily.data.repository.OnDeviceCatalogRepository
 import it.lagioiaproductions.shopeasily.domain.OfferRanking
@@ -30,7 +29,7 @@ data class SearchUiState(
 )
 
 class SearchViewModel(application: Application) : AndroidViewModel(application) {
-    private val repository: OffersRepository = OnDeviceCatalogRepository(application)
+    private val repository = OnDeviceCatalogRepository(application)
     private val preferencesRepository = UserPreferencesRepository(application)
     private val _uiState = MutableStateFlow(SearchUiState())
     val uiState: StateFlow<SearchUiState> = _uiState.asStateFlow()
@@ -62,6 +61,15 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     fun selectStore(storeName: String?) {
         _uiState.value = _uiState.value.copy(selectedStore = storeName)
         search(_uiState.value.query)
+    }
+
+    fun refreshForLocation(latitude: Double, longitude: Double) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isLoading = _uiState.value.offers.isEmpty())
+            val radius = preferencesRepository.preferences.first().radiusKm
+            runCatching { repository.synchronize(latitude, longitude, radius) }
+            search(_uiState.value.query)
+        }
     }
 
     private fun updateFilters(filters: SearchFilters) {

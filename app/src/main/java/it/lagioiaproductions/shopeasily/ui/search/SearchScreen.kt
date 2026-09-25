@@ -2,7 +2,12 @@
 
 package it.lagioiaproductions.shopeasily.ui.search
 
+import android.Manifest
+import android.annotation.SuppressLint
+import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -30,6 +35,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -50,6 +57,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Bolt
@@ -67,23 +75,69 @@ import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.Storefront
 import androidx.compose.material.icons.rounded.WbSunny
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.core.content.ContextCompat
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
 import it.lagioiaproductions.shopeasily.R
 import it.lagioiaproductions.shopeasily.data.model.Offer
 import it.lagioiaproductions.shopeasily.data.model.ProductImageKey
 import it.lagioiaproductions.shopeasily.domain.SortMode
+import it.lagioiaproductions.shopeasily.ui.common.StoreLogoResolver
 import java.text.NumberFormat
 import java.util.Locale
-import java.net.URI
 import java.net.URL
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+@SuppressLint("MissingPermission")
 @Composable
 fun SearchScreen(
     viewModel: SearchViewModel,
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var locationRefresh by remember { mutableStateOf(0) }
+    var locationGranted by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+                ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED,
+        )
+    }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { permissions ->
+        locationGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+            permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+    }
+
+    LaunchedEffect(Unit) {
+        if (!locationGranted) {
+            permissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+        }
+    }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) locationRefresh++
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    LaunchedEffect(locationGranted, locationRefresh) {
+        if (!locationGranted) return@LaunchedEffect
+        val client = LocationServices.getFusedLocationProviderClient(context)
+        client.getCurrentLocation(Priority.PRIORITY_BALANCED_POWER_ACCURACY, null)
+            .addOnSuccessListener { location ->
+                if (location != null) viewModel.refreshForLocation(location.latitude, location.longitude)
+                else client.lastLocation.addOnSuccessListener { last ->
+                    if (last != null) viewModel.refreshForLocation(last.latitude, last.longitude)
+                }
+            }
+    }
 
     Column(
         modifier = modifier
@@ -317,14 +371,11 @@ private fun ProductImage(offer: Offer) {
 
 @Composable
 private fun StoreLogo(offer: Offer) {
-    val faviconUrl = remember(offer.storeWebsite, offer.storeName) {
-        OFFICIAL_STORE_LOGOS.entries.firstOrNull { offer.storeName.contains(it.key, true) }?.value
-            ?: offer.storeWebsite?.let { website ->
-            runCatching { URI(website) }.getOrNull()?.let { uri -> "${uri.scheme}://${uri.authority}/favicon.ico" }
-        } ?: OFFICIAL_STORE_DOMAINS.entries.firstOrNull { offer.storeName.contains(it.key, true) }
-            ?.value?.let { "https://$it/favicon.ico" }
+    val bitmap by produceState<android.graphics.Bitmap?>(null, offer.storeWebsite, offer.storeName) {
+        value = withContext(Dispatchers.IO) {
+            StoreLogoResolver.load(offer.storeName, offer.storeWebsite)
+        }
     }
-    val bitmap by networkBitmap(faviconUrl)
     Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceVariant, modifier = Modifier.size(24.dp)) {
         if (bitmap != null) {
             Image(bitmap = bitmap!!.asImageBitmap(), contentDescription = "Marchio ${offer.storeName}", modifier = Modifier.padding(3.dp))
@@ -351,20 +402,6 @@ private fun networkBitmap(url: String?) = produceState<android.graphics.Bitmap?>
         }
     }
 }
-
-private val OFFICIAL_STORE_DOMAINS = mapOf(
-    "Esselunga" to "www.esselunga.it",
-    "NaturaSì" to "www.naturasi.it",
-    "Lidl" to "www.lidl.it",
-    "Coop" to "www.coop.it",
-    "Conad" to "www.conad.it",
-    "Carrefour" to "www.carrefour.it",
-    "Eurospin" to "www.eurospin.it",
-    "Cortilia" to "www.cortilia.it",
-)
-private val OFFICIAL_STORE_LOGOS = mapOf(
-    "Eurospin" to "https://www.eurospin.it/wp-content/themes/eurospin/assets/images/obj/logo.png",
-)
 
 private fun SortMode.icon(): ImageVector = when (this) {
     SortMode.SMART -> Icons.Rounded.AutoAwesome

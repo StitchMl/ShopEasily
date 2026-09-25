@@ -184,8 +184,12 @@ class OnDeviceCatalogRepository(
                 lines.mapIndexedNotNull { index, line ->
                     val match = PRICE.find(line) ?: return@mapIndexedNotNull null
                     val price = match.groupValues[1].replace(',', '.').toDoubleOrNull() ?: return@mapIndexedNotNull null
-                    val name = line.replace(match.value, "").trim(' ', '-', '–', ':').ifBlank { lines.getOrNull(index - 1).orEmpty() }
-                    name.takeIf { it.length in 2..160 }?.let {
+                    if (price <= 0.0 || price > MAX_REASONABLE_PRICE) return@mapIndexedNotNull null
+                    val inline = cleanProductName(line.replace(match.value, ""))
+                    val previous = cleanProductName(lines.getOrNull(index - 1).orEmpty())
+                    val name = sequenceOf(inline, previous).firstOrNull(::looksLikeProductName)
+                        ?: return@mapIndexedNotNull null
+                    name.let {
                         offer(it, shop.name, price, distance, documentIndex, storeWebsite = shop.website)
                     }
                 }
@@ -260,6 +264,7 @@ class OnDeviceCatalogRepository(
     private fun readCache(): List<Offer> = runCatching {
         val array = JSONArray(catalogFile.readText())
         List(array.length()) { index -> array.getJSONObject(index).toOffer() }
+            .filter { looksLikeProductName(it.productName) }
     }.getOrDefault(emptyList())
 
     private fun writeCache(offers: List<Offer>) {
@@ -277,14 +282,27 @@ class OnDeviceCatalogRepository(
     private fun JSONObject.toOffer(): Offer {
         val name = getString("name")
         return Offer(
-        id = getLong("id"), productName = name, brand = null,
-        storeName = getString("store"), price = getDouble("price"), unitPrice = null,
-        distanceMeters = getInt("distance"), qualityScore = null,
-        sustainabilityLabels = emptyList(), validUntil = null,
-        imageKey = imageFor(name),
-        productImageUrl = optString("productImageUrl").takeIf(String::isNotBlank),
-        storeWebsite = optString("storeWebsite").takeIf(String::isNotBlank),
-    )
+            id = getLong("id"), productName = name, brand = null,
+            storeName = getString("store"), price = getDouble("price"), unitPrice = null,
+            distanceMeters = getInt("distance"), qualityScore = null,
+            sustainabilityLabels = emptyList(), validUntil = null,
+            imageKey = imageFor(name),
+            productImageUrl = optString("productImageUrl").takeIf(String::isNotBlank),
+            storeWebsite = optString("storeWebsite").takeIf(String::isNotBlank),
+        )
+    }
+
+    private fun cleanProductName(value: String): String = value
+        .replace(Regex("""^[\s•·*–—:;,.-]+|[\s•·*–—:;,.-]+$"""), "")
+        .replace(Regex("""\s+"""), " ")
+        .trim()
+
+    private fun looksLikeProductName(value: String): Boolean {
+        if (value.length !in 3..100 || value.count(Char::isLetter) < 3) return false
+        if (value.split(' ').size > 12 || value.contains('€')) return false
+        if (BLOCKED_PRODUCT_TEXT.any { value.contains(it, ignoreCase = true) }) return false
+        val firstLetter = value.firstOrNull(Char::isLetter) ?: return false
+        return firstLetter.isUpperCase() || value == value.uppercase(Locale.ROOT)
     }
 
     private fun imageFor(name: String) = when {
@@ -330,9 +348,14 @@ class OnDeviceCatalogRepository(
         const val MAX_DOCUMENTS_PER_STORE = 6
         const val MAX_DOCUMENT_BYTES = 15 * 1024 * 1024
         const val MAX_CACHED_OFFERS = 10_000
+        const val MAX_REASONABLE_PRICE = 500.0
         val DISCOVERY_WORDS = listOf("offert", "volantin", "catalog", "promozion", "promo")
         val HREF = Regex("""href\s*=\s*["']([^"'#]+)["']""", RegexOption.IGNORE_CASE)
         val JSON_LD = Regex("""<script[^>]*type=["']application/ld\+json["'][^>]*>(.*?)</script>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
         val PRICE = Regex("""(?:€\s*)?(\d{1,4}[,.]\d{2})(?:\s*€)?""")
+        val BLOCKED_PRODUCT_TEXT = listOf(
+            "consegna", "ordine", "ordini", "iva", "importo", "gratuita", "gratuito", "fascia oraria",
+            "giorno successivo", "spesa minima", "pagamento", "servizio", "condizioni", "fino ad un",
+        )
     }
 }
