@@ -16,16 +16,27 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 
 data class ShoppingListItem(val name: String, val checked: Boolean)
 
+data class SelectedShoppingItem(
+    val offerId: Long,
+    val name: String,
+    val storeName: String,
+    val price: Double,
+    val promotional: Boolean,
+)
+
 data class ShoppingListUiState(
     val items: List<ShoppingListItem> = emptyList(),
     val plans: List<BasketPlan> = emptyList(),
     val preferences: UserPreferences = UserPreferences(),
+    val selectedItems: List<SelectedShoppingItem> = emptyList(),
 )
 
 class ShoppingListViewModel(application: Application) : AndroidViewModel(application) {
@@ -34,16 +45,29 @@ class ShoppingListViewModel(application: Application) : AndroidViewModel(applica
     private val liveCatalog = OnDeviceCatalogRepository(application)
     private val routing = RoutingRepository()
     private val plans = MutableStateFlow<List<BasketPlan>>(emptyList())
+    private val selectedItems = preferences.manualCartOfferIds.map { selectedIds ->
+        liveCatalog.search("").first().filter { it.id in selectedIds }.map { offer ->
+            SelectedShoppingItem(
+                offerId = offer.id,
+                name = offer.productName,
+                storeName = offer.storeName,
+                price = offer.price,
+                promotional = offer.promotional,
+            )
+        }
+    }
 
     val uiState: StateFlow<ShoppingListUiState> = combine(
         preferences.shoppingItems,
         preferences.preferences,
         plans,
-    ) { items, userPreferences, currentPlans ->
+        selectedItems,
+    ) { items, userPreferences, currentPlans, selected ->
         ShoppingListUiState(
             items = items.map { ShoppingListItem(it.first, it.second) },
             plans = currentPlans,
             preferences = userPreferences,
+            selectedItems = selected,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ShoppingListUiState())
 
@@ -62,7 +86,10 @@ class ShoppingListViewModel(application: Application) : AndroidViewModel(applica
             pricePerUnit = uiState.value.preferences.fuelPricePerUnit,
         )
         val basePlans = BasketOptimizer.optimize(
-            requestedItems = uiState.value.items.map(ShoppingListItem::name),
+            requestedItems = (
+                uiState.value.items.map(ShoppingListItem::name) +
+                    uiState.value.selectedItems.map(SelectedShoppingItem::name)
+                ).distinct(),
             catalog = catalogPrices,
             transport = transport,
         )
@@ -83,4 +110,6 @@ class ShoppingListViewModel(application: Application) : AndroidViewModel(applica
             }
         }
     }
+    fun removeSelectedItem(id: Long) = viewModelScope.launch { preferences.toggleManualCartOffer(id) }
+    fun clearSelectedItems() = viewModelScope.launch { preferences.clearManualCart() }
 }

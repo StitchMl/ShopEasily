@@ -15,6 +15,12 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.Icon
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Home
+import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.EditNote
+import androidx.compose.material.icons.rounded.LocalOffer
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -67,6 +73,38 @@ fun ShoppingListScreen(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            if (state.selectedItems.isNotEmpty()) {
+                item {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.Home, contentDescription = null)
+                        Text(
+                            "Selezionati dalla Home",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(start = 8.dp).weight(1f),
+                        )
+                        IconButton(onClick = viewModel::clearSelectedItems) {
+                            Icon(Icons.Rounded.DeleteOutline, contentDescription = "Rimuovi tutti i prodotti selezionati dalla Home")
+                        }
+                    }
+                }
+                items(state.selectedItems, key = SelectedShoppingItem::offerId) { item ->
+                    SelectedItemCard(item, onRemove = { viewModel.removeSelectedItem(item.offerId) })
+                }
+            }
+            if (state.items.isNotEmpty()) {
+                item {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.EditNote, contentDescription = null)
+                        Text(
+                            "Aggiunti a mano",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(start = 8.dp),
+                        )
+                    }
+                }
+            }
             items(state.items, key = ShoppingListItem::name) { item ->
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -89,9 +127,33 @@ fun ShoppingListScreen(
         }
         Button(
             onClick = viewModel::optimize,
-            enabled = state.items.isNotEmpty(),
+            enabled = state.items.isNotEmpty() || state.selectedItems.isNotEmpty(),
             modifier = Modifier.fillMaxWidth(),
         ) { Text("Trova il carrello migliore") }
+    }
+}
+
+@Composable
+private fun SelectedItemCard(item: SelectedShoppingItem, onRemove: () -> Unit) {
+    val currency = NumberFormat.getCurrencyInstance(Locale.ITALY)
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                if (item.promotional) Icons.Rounded.LocalOffer else Icons.Rounded.Home,
+                contentDescription = if (item.promotional) "In offerta" else "Selezionato dalla Home",
+            )
+            Column(modifier = Modifier.padding(start = 10.dp).weight(1f)) {
+                Text(item.name, fontWeight = FontWeight.SemiBold)
+                Text(item.storeName, style = MaterialTheme.typography.bodySmall)
+            }
+            Text(currency.format(item.price), color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+            IconButton(onClick = onRemove) {
+                Icon(Icons.Rounded.DeleteOutline, contentDescription = "Rimuovi ${item.name}")
+            }
+        }
     }
 }
 
