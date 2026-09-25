@@ -25,6 +25,12 @@ object OfferTextParser {
         if (value.split(Regex("[\\s/_.-]+"))
                 .any { token -> token.length >= 7 && token.any(Char::isDigit) && token.any(Char::isLetter) }
         ) return false
+        if (value.split(Regex("[\\s/_.-]+")).any { token ->
+                token.length >= 8 && token.zipWithNext().count { (left, right) ->
+                    left.isLetter() && right.isLetter() && left.isUpperCase() != right.isUpperCase()
+                } >= 3
+            }
+        ) return false
         if (value.count { it == '|' || it == '\\' || it == '[' || it == ']' } > 0) return false
         val firstLetter = value.firstOrNull(Char::isLetter) ?: return false
         return firstLetter.isUpperCase() || value == value.uppercase(Locale.ROOT)

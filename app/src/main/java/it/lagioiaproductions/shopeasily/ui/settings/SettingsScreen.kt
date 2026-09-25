@@ -27,6 +27,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.Button
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -58,6 +61,7 @@ private val supportedLoyaltyPrograms = listOf(
 fun SettingsScreen(
     modifier: Modifier = Modifier,
     viewModel: SettingsViewModel = viewModel(),
+    onOpenInfo: () -> Unit = {},
 ) {
     val preferences by viewModel.preferences.collectAsStateWithLifecycle()
     val vehicleLookup by viewModel.vehicleLookup.collectAsStateWithLifecycle()
@@ -85,7 +89,17 @@ fun SettingsScreen(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Text("Profilo", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "Profilo",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f),
+            )
+            IconButton(onClick = onOpenInfo) {
+                Icon(Icons.Rounded.Info, contentDescription = "Come funziona ShopEasily")
+            }
+        }
         OutlinedTextField(
             value = ageText,
             onValueChange = { value ->

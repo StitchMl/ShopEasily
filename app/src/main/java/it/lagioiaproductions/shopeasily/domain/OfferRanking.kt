@@ -34,16 +34,19 @@ object OfferRanking {
                 offer.isEligibleFor(filters.userAge)
         }
 
-        val normallySorted = when (filters.sortMode) {
-            SortMode.PRICE -> filtered.sortedBy { it.unitPriceOrPrice() }
-            SortMode.DISTANCE -> filtered.sortedBy(Offer::distanceMeters)
-            SortMode.QUALITY -> filtered.sortedByDescending { it.qualityScore ?: 0f }
-            SortMode.SMART -> smartSort(filtered)
-        }
-        return if (filters.sustainableOnly) {
-            normallySorted.sortedByDescending(Offer::sustainabilityScore)
+        val candidates = if (filters.sustainableOnly && filtered.isNotEmpty()) {
+            val bestScore = filtered.maxOf(Offer::sustainabilityScore)
+            filtered.filter { it.sustainabilityScore() >= bestScore - SUSTAINABILITY_BAND }
         } else {
-            normallySorted
+            filtered
+        }
+        return when (filters.sortMode) {
+            SortMode.PRICE -> candidates.sortedWith(compareBy<Offer> { it.unitPriceOrPrice() }.thenBy(Offer::distanceMeters))
+            SortMode.DISTANCE -> candidates.sortedWith(compareBy(Offer::distanceMeters).thenBy { it.unitPriceOrPrice() })
+            SortMode.QUALITY -> candidates.sortedWith(
+                compareByDescending<Offer>(Offer::effectiveQualityScore).thenBy { it.unitPriceOrPrice() },
+            )
+            SortMode.SMART -> smartSort(candidates)
         }
     }
 
@@ -56,7 +59,7 @@ object OfferRanking {
         return offers.sortedByDescending { offer ->
             val priceScore = 1.0 - offer.unitPriceOrPrice() / maximumPrice
             val distanceScore = 1.0 - offer.distanceMeters.toDouble() / maximumDistance
-            val qualityScore = (offer.qualityScore?.toDouble() ?: 2.5) / 5.0
+            val qualityScore = offer.effectiveQualityScore().toDouble() / 5.0
             val sustainabilityScore = offer.sustainabilityScore() / 100.0
             val loyaltyPenalty = if (offer.loyaltyRequired) 0.08 else 0.0
 
@@ -69,7 +72,19 @@ object OfferRanking {
     }
 
     private fun Offer.unitPriceOrPrice(): Double = unitPrice ?: price
+
+    private const val SUSTAINABILITY_BAND = 20
 }
+
+/** Explicit rating when available; otherwise a conservative data-quality estimate. */
+fun Offer.effectiveQualityScore(): Float = qualityScore ?: (
+    2.2f +
+        (if (productImageVerified) 0.8f else 0f) +
+        (if (!productImageUrl.isNullOrBlank()) 0.25f else 0f) +
+        (if (!brand.isNullOrBlank()) 0.45f else 0f) +
+        (if (productName.length in 8..80) 0.3f else 0f) +
+        (if (sustainabilityLabels.isNotEmpty()) 0.5f else 0f)
+    ).coerceIn(1f, 5f)
 
 fun Offer.sustainabilityScore(): Int {
     val labels = sustainabilityLabels.joinToString(" ").lowercase()
@@ -86,7 +101,7 @@ fun Offer.sustainabilityScore(): Int {
         distanceMeters <= 10_000 -> 8
         else -> 2
     }
-    val quality = ((qualityScore ?: 2.5f) / 5f * 10).toInt()
+    val quality = (effectiveQualityScore() / 5f * 10).toInt()
     return (certification + proximity + quality).coerceIn(0, 100)
 }
 

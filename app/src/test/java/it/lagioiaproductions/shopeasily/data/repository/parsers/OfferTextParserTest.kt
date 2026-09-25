@@ -36,5 +36,6 @@ class OfferTextParserTest {
     @Test
     fun rejectsBarcodeLikeOcrGarbage() {
         assertTrue(OfferTextParser.parse(listOf("PASSAELEGarR0", "6,45 €")).isEmpty())
+        assertTrue(OfferTextParser.parse(listOf("PASsAELEGarRO", "6,45 €")).isEmpty())
     }
 }

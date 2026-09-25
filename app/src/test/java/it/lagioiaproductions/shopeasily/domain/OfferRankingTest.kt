@@ -19,10 +19,25 @@ class OfferRankingTest {
     }
 
     @Test
-    fun sustainableFilterRanksLabelledFirstWithoutHidingAlternatives() {
+    fun sustainableFilterKeepsTheBestAvailableBand() {
         val result = OfferRanking.apply(offers, SearchFilters(sustainableOnly = true))
 
-        assertEquals(listOf(1L, 2L), result.map(Offer::id))
+        assertEquals(listOf(1L), result.map(Offer::id))
+    }
+
+    @Test
+    fun selectedSortRemainsPrimaryWithSustainableFilter() {
+        val similarlySustainable = listOf(
+            offer(id = 1, price = 3.0, distance = 300, sustainable = true),
+            offer(id = 2, price = 1.0, distance = 600, sustainable = true),
+        )
+
+        val result = OfferRanking.apply(
+            similarlySustainable,
+            SearchFilters(sortMode = SortMode.PRICE, sustainableOnly = true),
+        )
+
+        assertEquals(listOf(2L, 1L), result.map(Offer::id))
     }
 
     @Test

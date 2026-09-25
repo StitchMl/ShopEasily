@@ -25,6 +25,7 @@ import it.lagioiaproductions.shopeasily.ui.search.SearchScreen
 import it.lagioiaproductions.shopeasily.ui.search.SearchViewModel
 import it.lagioiaproductions.shopeasily.ui.settings.SettingsScreen
 import it.lagioiaproductions.shopeasily.ui.shoppinglist.ShoppingListScreen
+import it.lagioiaproductions.shopeasily.ui.info.InfoScreen
 
 private enum class Destination(
     val label: String,
@@ -40,6 +41,7 @@ private enum class Destination(
 @Composable
 fun ShopEasilyApp() {
     var destination by rememberSaveable { mutableStateOf(Destination.SEARCH) }
+    var showInfo by rememberSaveable { mutableStateOf(false) }
     val searchViewModel: SearchViewModel = viewModel()
 
     Scaffold(
@@ -48,7 +50,7 @@ fun ShopEasilyApp() {
                 Destination.entries.forEach { item ->
                     NavigationBarItem(
                         selected = destination == item,
-                        onClick = { destination = item },
+                        onClick = { destination = item; showInfo = false },
                         icon = { Icon(item.icon, contentDescription = item.description) },
                         label = { Text(item.label, maxLines = 1, style = MaterialTheme.typography.labelSmall) },
                     )
@@ -56,14 +58,19 @@ fun ShopEasilyApp() {
             }
         },
     ) { innerPadding ->
-        when (destination) {
+        if (showInfo) {
+            InfoScreen(onBack = { showInfo = false }, modifier = Modifier.padding(innerPadding))
+        } else when (destination) {
             Destination.SEARCH -> SearchScreen(
                 viewModel = searchViewModel,
                 modifier = Modifier.padding(innerPadding),
             )
             Destination.MAP -> MapScreen(modifier = Modifier.padding(innerPadding))
             Destination.LIST -> ShoppingListScreen(modifier = Modifier.padding(innerPadding))
-            Destination.SETTINGS -> SettingsScreen(modifier = Modifier.padding(innerPadding))
+            Destination.SETTINGS -> SettingsScreen(
+                modifier = Modifier.padding(innerPadding),
+                onOpenInfo = { showInfo = true },
+            )
         }
     }
 }
