@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -25,6 +26,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.Button
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -58,11 +60,16 @@ fun SettingsScreen(
     viewModel: SettingsViewModel = viewModel(),
 ) {
     val preferences by viewModel.preferences.collectAsStateWithLifecycle()
+    val vehicleLookup by viewModel.vehicleLookup.collectAsStateWithLifecycle()
     var ageText by remember(preferences.age) { mutableStateOf(preferences.age?.toString().orEmpty()) }
     var loyaltyMenuOpen by remember { mutableStateOf(false) }
     var selectedShop by remember { mutableStateOf("") }
     var vehicleMenuOpen by remember { mutableStateOf(false) }
     var fuelMenuOpen by remember { mutableStateOf(false) }
+    var yearMenuOpen by remember { mutableStateOf(false) }
+    var makeMenuOpen by remember { mutableStateOf(false) }
+    var modelMenuOpen by remember { mutableStateOf(false) }
+    var optionMenuOpen by remember { mutableStateOf(false) }
     var consumptionText by remember(preferences.consumptionPer100Km) {
         mutableStateOf(preferences.consumptionPer100Km.toString())
     }
@@ -141,6 +148,84 @@ fun SettingsScreen(
             }
         }
         if (preferences.fuelType != FuelType.NONE) {
+            if (preferences.vehicleType == VehicleType.CAR) {
+                Text("Consumo automatico", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ExposedDropdownMenuBox(
+                        expanded = yearMenuOpen,
+                        onExpandedChange = { yearMenuOpen = it },
+                        modifier = Modifier.weight(0.38f),
+                    ) {
+                        OutlinedTextField(
+                            value = vehicleLookup.year.toString(), onValueChange = {}, readOnly = true,
+                            label = { Text("Anno") },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(yearMenuOpen) },
+                            modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
+                        )
+                        ExposedDropdownMenu(yearMenuOpen, { yearMenuOpen = false }, modifier = Modifier.heightIn(max = 300.dp)) {
+                            (java.util.Calendar.getInstance().get(java.util.Calendar.YEAR) downTo 1984).forEach { year ->
+                                DropdownMenuItem(text = { Text(year.toString()) }, onClick = {
+                                    viewModel.selectVehicleYear(year); yearMenuOpen = false
+                                })
+                            }
+                        }
+                    }
+                    ExposedDropdownMenuBox(
+                        expanded = makeMenuOpen,
+                        onExpandedChange = {
+                            makeMenuOpen = it
+                            if (it && vehicleLookup.makes.isEmpty()) viewModel.selectVehicleYear(vehicleLookup.year)
+                        },
+                        modifier = Modifier.weight(0.62f),
+                    ) {
+                        OutlinedTextField(
+                            value = vehicleLookup.make.orEmpty(), onValueChange = {}, readOnly = true,
+                            label = { Text("Marca") },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(makeMenuOpen) },
+                            modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
+                        )
+                        ExposedDropdownMenu(makeMenuOpen, { makeMenuOpen = false }, modifier = Modifier.heightIn(max = 300.dp)) {
+                            vehicleLookup.makes.forEach { make ->
+                                DropdownMenuItem(text = { Text(make) }, onClick = {
+                                    viewModel.selectVehicleMake(make); makeMenuOpen = false
+                                })
+                            }
+                        }
+                    }
+                }
+                ExposedDropdownMenuBox(expanded = modelMenuOpen, onExpandedChange = { modelMenuOpen = it }) {
+                    OutlinedTextField(
+                        value = vehicleLookup.model.orEmpty(), onValueChange = {}, readOnly = true,
+                        label = { Text("Modello") }, enabled = vehicleLookup.make != null,
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(modelMenuOpen) },
+                        modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
+                    )
+                    ExposedDropdownMenu(modelMenuOpen, { modelMenuOpen = false }, modifier = Modifier.heightIn(max = 300.dp)) {
+                        vehicleLookup.models.forEach { model ->
+                            DropdownMenuItem(text = { Text(model) }, onClick = {
+                                viewModel.selectVehicleModel(model); modelMenuOpen = false
+                            })
+                        }
+                    }
+                }
+                ExposedDropdownMenuBox(expanded = optionMenuOpen, onExpandedChange = { optionMenuOpen = it }) {
+                    OutlinedTextField(
+                        value = vehicleLookup.option?.label.orEmpty(), onValueChange = {}, readOnly = true,
+                        label = { Text("Versione") }, enabled = vehicleLookup.model != null,
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(optionMenuOpen) },
+                        modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
+                    )
+                    ExposedDropdownMenu(optionMenuOpen, { optionMenuOpen = false }, modifier = Modifier.heightIn(max = 300.dp)) {
+                        vehicleLookup.options.forEach { option ->
+                            DropdownMenuItem(text = { Text(option.label) }, onClick = {
+                                viewModel.selectVehicleOption(option); optionMenuOpen = false
+                            })
+                        }
+                    }
+                }
+                if (vehicleLookup.loading) CircularProgressIndicator()
+                preferences.vehicleModelLabel?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+            }
             OutlinedTextField(
                 value = consumptionText,
                 onValueChange = { value ->

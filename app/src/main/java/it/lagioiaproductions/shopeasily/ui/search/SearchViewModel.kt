@@ -36,6 +36,7 @@ data class SearchUiState(
     val isLoading: Boolean = false,
     val filters: SearchFilters = SearchFilters(),
     val availableStores: List<String> = emptyList(),
+    val storeWebsites: Map<String, String?> = emptyMap(),
     val selectedStore: String? = null,
     val shoppingTotal: Double = 0.0,
     val matchedShoppingItems: Int = 0,
@@ -161,6 +162,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 loyaltyCards = preferences.loyaltyCards,
             )
             val allRanked = OfferRanking.apply(repository.search("").first(), filters)
+            val storedStores = repository.storedStores()
             val discoveredStores = repository.observeSourceStatuses().first().map { it.storeName }
             val stores = (allRanked.map(Offer::storeName) + discoveredStores).distinct().sorted()
             val selectedStore = _uiState.value.selectedStore?.takeIf(stores::contains)
@@ -200,6 +202,10 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 offers = visibleOffers,
                 filters = filters,
                 availableStores = stores,
+                storeWebsites = stores.associateWith { name ->
+                    allRanked.firstOrNull { it.storeName == name }?.storeWebsite
+                        ?: storedStores.firstOrNull { it.name == name }?.website
+                },
                 selectedStore = selectedStore,
                 shoppingTotal = matchedPrices.sum(),
                 matchedShoppingItems = matchedPrices.size,

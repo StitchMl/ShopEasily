@@ -102,6 +102,7 @@ import it.lagioiaproductions.shopeasily.R
 import it.lagioiaproductions.shopeasily.data.model.Offer
 import it.lagioiaproductions.shopeasily.data.model.ProductImageKey
 import it.lagioiaproductions.shopeasily.domain.SortMode
+import it.lagioiaproductions.shopeasily.domain.sustainabilityScore
 import it.lagioiaproductions.shopeasily.ui.common.StoreLogoResolver
 import java.text.NumberFormat
 import java.util.Locale
@@ -225,6 +226,7 @@ fun SearchScreen(
                 )
                 StoreMenu(
                     stores = state.availableStores,
+                    websites = state.storeWebsites,
                     selected = state.selectedStore,
                     onSelected = viewModel::selectStore,
                 )
@@ -284,6 +286,7 @@ fun SearchScreen(
                         OfferCard(
                             offer = offer,
                             selected = offer.id in state.selectedOfferIds,
+                            showSustainabilityScore = state.filters.sustainableOnly,
                             onToggle = { viewModel.toggleOfferSelection(offer) },
                         )
                     }
@@ -345,7 +348,12 @@ private fun EmptyResults() {
 }
 
 @Composable
-private fun OfferCard(offer: Offer, selected: Boolean, onToggle: () -> Unit) {
+private fun OfferCard(
+    offer: Offer,
+    selected: Boolean,
+    showSustainabilityScore: Boolean,
+    onToggle: () -> Unit,
+) {
     val euroFormatter = NumberFormat.getCurrencyInstance(Locale.ITALY)
 
     Card(
@@ -396,6 +404,7 @@ private fun OfferCard(offer: Offer, selected: Boolean, onToggle: () -> Unit) {
                 horizontalArrangement = Arrangement.spacedBy(7.dp),
                 modifier = Modifier.padding(top = 8.dp),
             ) {
+                if (showSustainabilityScore) SustainabilityScoreBadge(offer.sustainabilityScore())
                 if (offer.promotional) ProductBadge(Icons.Rounded.LocalOffer, "Prezzo in offerta")
                 offer.qualityScore?.let { score ->
                     ProductBadge(Icons.Rounded.Star, "Qualità ${"%.1f".format(Locale.ITALY, score)} su 5")
@@ -412,6 +421,22 @@ private fun OfferCard(offer: Offer, selected: Boolean, onToggle: () -> Unit) {
     }
 }
 
+}
+
+@Composable
+private fun SustainabilityScoreBadge(score: Int) {
+    Surface(
+        shape = MaterialTheme.shapes.small,
+        color = MaterialTheme.colorScheme.primaryContainer,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Rounded.Eco, contentDescription = null, modifier = Modifier.size(16.dp))
+            Text("$score", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 3.dp))
+        }
+    }
 }
 
 private fun ProductImageKey.drawableResource(): Int = when (this) {
@@ -436,7 +461,12 @@ private fun ProductImageKey.drawableResource(): Int = when (this) {
 }
 
 @Composable
-private fun StoreMenu(stores: List<String>, selected: String?, onSelected: (String?) -> Unit) {
+private fun StoreMenu(
+    stores: List<String>,
+    websites: Map<String, String?>,
+    selected: String?,
+    onSelected: (String?) -> Unit,
+) {
     var expanded by remember { mutableStateOf(false) }
     Box {
         IconButton(onClick = { expanded = true }, modifier = Modifier.size(44.dp)) {
@@ -452,14 +482,40 @@ private fun StoreMenu(stores: List<String>, selected: String?, onSelected: (Stri
             modifier = Modifier.widthIn(min = 190.dp, max = 300.dp).heightIn(max = 300.dp),
         ) {
             DropdownMenuItem(
-                text = { Text("Tutti") },
+                text = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.Storefront, contentDescription = null, modifier = Modifier.size(24.dp))
+                        Text("Tutti", modifier = Modifier.padding(start = 10.dp))
+                    }
+                },
                 onClick = { onSelected(null); expanded = false },
             )
             stores.forEach { store ->
                 DropdownMenuItem(
-                    text = { Text(store) },
+                    text = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            StoreFilterLogo(store, websites[store])
+                            Text(store, modifier = Modifier.padding(start = 10.dp), maxLines = 1)
+                        }
+                    },
                     onClick = { onSelected(store); expanded = false },
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun StoreFilterLogo(storeName: String, website: String?) {
+    val bitmap by produceState<android.graphics.Bitmap?>(null, website, storeName) {
+        value = withContext(Dispatchers.IO) { StoreLogoResolver.load(storeName, website) }
+    }
+    Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceVariant, modifier = Modifier.size(28.dp)) {
+        if (bitmap != null) {
+            Image(bitmap = bitmap!!.asImageBitmap(), contentDescription = "Marchio $storeName", modifier = Modifier.padding(3.dp))
+        } else {
+            Box(contentAlignment = Alignment.Center) {
+                Text(storeName.take(1).uppercase(), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
             }
         }
     }
@@ -471,7 +527,7 @@ private fun ProductImage(offer: Offer) {
     // JSON-LD product. Prefer a truthful category illustration when the parsed title
     // is not specific enough to validate the remote image.
     val trustedRemoteUrl = offer.productImageUrl.takeIf {
-        offer.imageKey != ProductImageKey.OTHER && offer.productName.length >= 3
+        (offer.productImageVerified || offer.imageKey != ProductImageKey.OTHER) && offer.productName.length >= 3
     }
     val bitmap by networkBitmap(trustedRemoteUrl)
     if (bitmap != null) {

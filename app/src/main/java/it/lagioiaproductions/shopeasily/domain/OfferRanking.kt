@@ -27,7 +27,6 @@ object OfferRanking {
     fun apply(offers: List<Offer>, filters: SearchFilters): List<Offer> {
         val filtered = offers.filter { offer ->
             offer.distanceMeters <= filters.maximumDistanceMeters &&
-                (!filters.sustainableOnly || offer.sustainabilityLabels.isNotEmpty()) &&
                 (!offer.loyaltyRequired || (
                     filters.includeLoyaltyOffers && offer.storeName in filters.loyaltyCards
                 )) &&
@@ -35,11 +34,16 @@ object OfferRanking {
                 offer.isEligibleFor(filters.userAge)
         }
 
-        return when (filters.sortMode) {
+        val normallySorted = when (filters.sortMode) {
             SortMode.PRICE -> filtered.sortedBy { it.unitPriceOrPrice() }
             SortMode.DISTANCE -> filtered.sortedBy(Offer::distanceMeters)
             SortMode.QUALITY -> filtered.sortedByDescending { it.qualityScore ?: 0f }
             SortMode.SMART -> smartSort(filtered)
+        }
+        return if (filters.sustainableOnly) {
+            normallySorted.sortedByDescending(Offer::sustainabilityScore)
+        } else {
+            normallySorted
         }
     }
 
@@ -53,7 +57,7 @@ object OfferRanking {
             val priceScore = 1.0 - offer.unitPriceOrPrice() / maximumPrice
             val distanceScore = 1.0 - offer.distanceMeters.toDouble() / maximumDistance
             val qualityScore = (offer.qualityScore?.toDouble() ?: 2.5) / 5.0
-            val sustainabilityScore = if (offer.sustainabilityLabels.isEmpty()) 0.0 else 1.0
+            val sustainabilityScore = offer.sustainabilityScore() / 100.0
             val loyaltyPenalty = if (offer.loyaltyRequired) 0.08 else 0.0
 
             0.45 * priceScore +
@@ -65,6 +69,25 @@ object OfferRanking {
     }
 
     private fun Offer.unitPriceOrPrice(): Double = unitPrice ?: price
+}
+
+fun Offer.sustainabilityScore(): Int {
+    val labels = sustainabilityLabels.joinToString(" ").lowercase()
+    val certification = when {
+        listOf("biologic", "bio ", "fair", "equo", "cruelty", "benessere animale").any(labels::contains) -> 60
+        listOf("km 0", "locale", "filiera", "stagional", "artigian").any(labels::contains) -> 45
+        sustainabilityLabels.isNotEmpty() -> 35
+        else -> 0
+    }
+    val proximity = when {
+        distanceMeters <= 500 -> 30
+        distanceMeters <= 2_000 -> 24
+        distanceMeters <= 5_000 -> 16
+        distanceMeters <= 10_000 -> 8
+        else -> 2
+    }
+    val quality = ((qualityScore ?: 2.5f) / 5f * 10).toInt()
+    return (certification + proximity + quality).coerceIn(0, 100)
 }
 
 fun currentOfferDay(calendar: Calendar = Calendar.getInstance()): OfferDay = when (

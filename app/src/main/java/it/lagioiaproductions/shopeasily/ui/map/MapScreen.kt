@@ -3,6 +3,7 @@ package it.lagioiaproductions.shopeasily.ui.map
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.content.ActivityNotFoundException
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
@@ -97,7 +98,6 @@ fun MapScreen(modifier: Modifier = Modifier) {
     }
     var userLocation by remember { mutableStateOf<LatLng?>(null) }
     var stores by remember { mutableStateOf(emptyList<NearbyStore>()) }
-    var selectedStore by remember { mutableStateOf<NearbyStore?>(null) }
     var isLoading by remember { mutableStateOf(false) }
     var refreshKey by remember { mutableStateOf(0) }
     var mapInstance by remember { mutableStateOf<MapLibreMap?>(null) }
@@ -160,9 +160,6 @@ fun MapScreen(modifier: Modifier = Modifier) {
         }.getOrDefault(emptyList())
         if (refreshedStores.isNotEmpty()) {
             stores = refreshedStores
-            selectedStore = selectedStore?.let { selected ->
-                refreshedStores.firstOrNull { it.name == selected.name }
-            } ?: refreshedStores.first()
         }
         isLoading = false
         repository.synchronize(position.latitude, position.longitude, radius)
@@ -262,12 +259,6 @@ fun MapScreen(modifier: Modifier = Modifier) {
                     stores.take(MAX_VISIBLE_STORES).forEach { store ->
                         StoreCard(
                             store = store,
-                            selected = selectedStore == store,
-                            onSelect = {
-                                selectedStore = store
-                                mapInstance?.cameraPosition = CameraPosition.Builder()
-                                    .target(LatLng(store.latitude, store.longitude)).zoom(15.5).build()
-                            },
                             onNavigate = {
                                 openNavigation(context, store)
                             },
@@ -288,7 +279,19 @@ private fun openNavigation(context: android.content.Context, store: NearbyStore)
         Intent.ACTION_VIEW,
         Uri.parse("geo:${store.latitude},${store.longitude}?q=${store.latitude},${store.longitude}(${Uri.encode(store.name)})"),
     )
-    context.startActivity(if (intent.resolveActivity(context.packageManager) != null) intent else fallback)
+    val selectedIntent = if (intent.resolveActivity(context.packageManager) != null) intent else fallback
+    try {
+        context.startActivity(selectedIntent)
+    } catch (_: ActivityNotFoundException) {
+        context.startActivity(
+            Intent(
+                Intent.ACTION_VIEW,
+                Uri.parse(
+                    "https://www.google.com/maps/dir/?api=1&destination=${store.latitude},${store.longitude}",
+                ),
+            ),
+        )
+    }
 }
 
 @Composable
@@ -305,8 +308,8 @@ private fun LocationPermissionCard(onEnable: () -> Unit) {
 }
 
 @Composable
-private fun StoreCard(store: NearbyStore, selected: Boolean, onSelect: () -> Unit, onNavigate: () -> Unit) {
-    Card(onClick = onSelect, modifier = Modifier.width(230.dp)) {
+private fun StoreCard(store: NearbyStore, onNavigate: () -> Unit) {
+    Card(onClick = onNavigate, modifier = Modifier.width(230.dp)) {
         Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             StoreLogo(store)
             Spacer(Modifier.width(10.dp))

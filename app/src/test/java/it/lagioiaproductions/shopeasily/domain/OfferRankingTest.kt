@@ -19,11 +19,10 @@ class OfferRankingTest {
     }
 
     @Test
-    fun sustainableFilterExcludesUnlabelledOffers() {
+    fun sustainableFilterRanksLabelledFirstWithoutHidingAlternatives() {
         val result = OfferRanking.apply(offers, SearchFilters(sustainableOnly = true))
 
-        assertTrue(result.all { it.sustainabilityLabels.isNotEmpty() })
-        assertEquals(listOf(1L), result.map(Offer::id))
+        assertEquals(listOf(1L, 2L), result.map(Offer::id))
     }
 
     @Test

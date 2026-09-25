@@ -36,6 +36,7 @@ data class UserPreferences(
     val fuelType: FuelType = FuelType.GASOLINE,
     val consumptionPer100Km: Double = 6.5,
     val fuelPricePerUnit: Double = FuelType.GASOLINE.defaultPrice,
+    val vehicleModelLabel: String? = null,
 )
 
 class UserPreferencesRepository(private val context: Context) {
@@ -54,6 +55,7 @@ class UserPreferencesRepository(private val context: Context) {
         val consumption = stringPreferencesKey("consumption_per_100_km")
         val fuelPrice = stringPreferencesKey("fuel_price_per_unit")
         val manualCartOfferIds = stringSetPreferencesKey("manual_cart_offer_ids")
+        val vehicleModelLabel = stringPreferencesKey("vehicle_model_label")
     }
 
     val preferences: Flow<UserPreferences> = context.shopEasilyDataStore.data.map { values ->
@@ -71,6 +73,7 @@ class UserPreferencesRepository(private val context: Context) {
                 ?: FuelType.GASOLINE,
             consumptionPer100Km = values[Keys.consumption]?.toDoubleOrNull() ?: 6.5,
             fuelPricePerUnit = values[Keys.fuelPrice]?.toDoubleOrNull() ?: FuelType.GASOLINE.defaultPrice,
+            vehicleModelLabel = values[Keys.vehicleModelLabel],
         )
     }
 
@@ -129,6 +132,11 @@ class UserPreferencesRepository(private val context: Context) {
 
     suspend fun setConsumption(value: Double) = context.shopEasilyDataStore.edit {
         it[Keys.consumption] = value.coerceIn(0.0, 100.0).toString()
+    }
+
+    suspend fun setVehicleEfficiency(label: String, litersPer100Km: Double) = context.shopEasilyDataStore.edit {
+        it[Keys.vehicleModelLabel] = label
+        it[Keys.consumption] = litersPer100Km.coerceIn(0.1, 100.0).toString()
     }
 
     suspend fun setAutomaticFuelPrice(value: Double) = context.shopEasilyDataStore.edit {

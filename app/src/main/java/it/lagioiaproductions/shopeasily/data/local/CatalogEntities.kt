@@ -41,6 +41,7 @@ data class OfferEntity(
     val observedAt: Long,
     val expiresAt: Long,
     val promotional: Boolean = true,
+    val productImageVerified: Boolean = false,
 )
 
 @Entity(tableName = "source_status")

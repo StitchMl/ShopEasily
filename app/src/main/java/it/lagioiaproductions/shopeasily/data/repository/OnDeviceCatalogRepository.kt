@@ -18,6 +18,7 @@ import it.lagioiaproductions.shopeasily.data.local.StoreEntity
 import it.lagioiaproductions.shopeasily.data.repository.parsers.ChainSourceAdapters
 import it.lagioiaproductions.shopeasily.data.repository.parsers.OcrFlyerReader
 import it.lagioiaproductions.shopeasily.data.repository.parsers.OfferTextParser
+import it.lagioiaproductions.shopeasily.data.repository.parsers.HtmlProductParser
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.net.HttpURLConnection
@@ -99,7 +100,10 @@ class OnDeviceCatalogRepository(
 
     override fun search(query: String): Flow<List<Offer>> = flow {
         migrateLegacyCacheIfNeeded()
-        val local = dao.activeOffers(System.currentTimeMillis()).map { it.toOffer() }.filter { offer ->
+        val sustainableStores = dao.stores().associate { it.id to it.sustainable }
+        val local = dao.activeOffers(System.currentTimeMillis()).map { entity ->
+            entity.toOffer(sustainableStores[entity.storeId] == true)
+        }.filter { offer ->
             query.isBlank() || offer.productName.contains(query, true) || offer.storeName.contains(query, true)
         }
         val demo = if (local.isEmpty()) fallback.search(query).first() else emptyList()
@@ -213,7 +217,8 @@ class OnDeviceCatalogRepository(
         val homepage = request(website)?.toString(Charsets.UTF_8) ?: return emptyList()
         val links = candidateLinks(shop.name, website, homepage).take(MAX_DOCUMENTS_PER_STORE)
         val distance = distanceMeters(userLat, userLon, shop.latitude, shop.longitude)
-        val result = parseStructuredProducts(homepage, shop, distance, promotional = false).toMutableList()
+        val result = parseHtmlProducts(homepage, website, shop, distance, promotional = false).toMutableList()
+        val productDetailLinks = HtmlProductParser.detailLinks(homepage, website).toMutableSet()
         links.forEachIndexed { index, link ->
             if (!isPublicUrl(link) || !robotsAllows(link)) return@forEachIndexed
             val bytes = request(link) ?: return@forEachIndexed
@@ -221,15 +226,23 @@ class OnDeviceCatalogRepository(
             result += if (link.substringBefore('?').endsWith(".pdf", true) || bytes.startsWithPdfHeader()) {
                 parsePdf(bytes, shop, distance, index)
             } else {
-                parseStructuredProducts(
-                    bytes.toString(Charsets.UTF_8),
+                val html = bytes.toString(Charsets.UTF_8)
+                productDetailLinks += HtmlProductParser.detailLinks(html, link)
+                parseHtmlProducts(
+                    html,
+                    link,
                     shop,
                     distance,
                     promotional = PROMOTION_PATH_HINTS.any { link.contains(it, true) },
                 )
             }
         }
-        return result
+        productDetailLinks.take(MAX_PRODUCT_DETAIL_PAGES).forEach { detailUrl ->
+            if (!isPublicUrl(detailUrl) || !robotsAllows(detailUrl)) return@forEach
+            val html = request(detailUrl)?.toString(Charsets.UTF_8) ?: return@forEach
+            result += parseHtmlProducts(html, detailUrl, shop, distance, promotional = false)
+        }
+        return result.distinctBy { Triple(it.productName.lowercase(Locale.ROOT), it.price, it.productImageUrl) }
     }
 
     private fun candidateLinks(storeName: String, base: String, html: String): List<String> {
@@ -290,6 +303,31 @@ class OnDeviceCatalogRepository(
         return result
     }
 
+    private fun parseHtmlProducts(
+        html: String,
+        pageUrl: String,
+        shop: NearbyStore,
+        distance: Int,
+        promotional: Boolean,
+    ): List<Offer> {
+        val structured = parseStructuredProducts(html, shop, distance, promotional)
+        val cards = HtmlProductParser.parse(html, pageUrl).map { product ->
+            offer(
+                name = product.name,
+                store = shop.name,
+                price = product.price,
+                distance = distance,
+                productImageUrl = product.imageUrl?.takeIf(::isPublicUrl),
+                storeWebsite = shop.website,
+                promotional = promotional,
+                productImageVerified = product.imageUrl != null,
+            )
+        }
+        // DOM cards keep name, price and image in the same container, so prefer them
+        // over broader JSON-LD records when both describe the same product.
+        return (cards + structured).distinctBy { Triple(it.productName.lowercase(Locale.ROOT), it.price, it.productImageUrl) }
+    }
+
     private fun walkJson(value: Any?): Sequence<JSONObject> = sequence {
         when (value) {
             is JSONObject -> {
@@ -332,12 +370,14 @@ class OnDeviceCatalogRepository(
         productImageUrl: String? = null,
         storeWebsite: String? = null,
         promotional: Boolean = true,
+        productImageVerified: Boolean = false,
     ) = Offer(
         id = "$store|$name|$price|$salt".hashCode().toLong().and(0xffffffffL),
         productName = name, brand = null, storeName = store, price = price, unitPrice = null,
         distanceMeters = distance, qualityScore = null, sustainabilityLabels = emptyList(),
         validUntil = null, imageKey = imageFor(name), productImageUrl = productImageUrl, storeWebsite = storeWebsite,
         promotional = promotional,
+        productImageVerified = productImageVerified,
     )
 
     private fun request(url: String, method: String = "GET", body: ByteArray? = null): ByteArray? {
@@ -404,6 +444,7 @@ class OnDeviceCatalogRepository(
                 put("price", item.price); put("distance", item.distanceMeters); put("image", item.imageKey.name)
                 put("productImageUrl", item.productImageUrl); put("storeWebsite", item.storeWebsite)
                 put("promotional", item.promotional)
+                put("productImageVerified", item.productImageVerified)
             })
         }
         catalogFile.writeText(array.toString())
@@ -420,6 +461,7 @@ class OnDeviceCatalogRepository(
             productImageUrl = optString("productImageUrl").takeIf(String::isNotBlank),
             storeWebsite = optString("storeWebsite").takeIf(String::isNotBlank),
             promotional = optBoolean("promotional", true),
+            productImageVerified = optBoolean("productImageVerified", false),
         )
     }
 
@@ -486,10 +528,11 @@ class OnDeviceCatalogRepository(
             observedAt = now,
             expiresAt = now + OFFER_TTL_MILLIS,
             promotional = promotional,
+            productImageVerified = productImageVerified,
         )
     }
 
-    private fun OfferEntity.toOffer() = Offer(
+    private fun OfferEntity.toOffer(sustainableStore: Boolean = false) = Offer(
         id = id,
         productName = productName,
         brand = null,
@@ -498,12 +541,13 @@ class OnDeviceCatalogRepository(
         unitPrice = null,
         distanceMeters = distanceMeters,
         qualityScore = null,
-        sustainabilityLabels = emptyList(),
+        sustainabilityLabels = if (sustainableStore) listOf("Negozio locale sostenibile") else emptyList(),
         validUntil = null,
         imageKey = imageFor(productName),
         productImageUrl = productImageUrl,
         storeWebsite = storeWebsite,
         promotional = promotional,
+        productImageVerified = productImageVerified,
     )
 
     private fun imageFor(name: String) = when {
@@ -548,6 +592,7 @@ class OnDeviceCatalogRepository(
         const val MAX_DOCUMENTS_PER_STORE = 6
         const val MAX_SOURCE_PAGES_PER_STORE = 3
         const val MAX_DISCOVERED_SOURCES = 3
+        const val MAX_PRODUCT_DETAIL_PAGES = 12
         const val MAX_DOCUMENT_BYTES = 15 * 1024 * 1024
         const val OFFER_TTL_MILLIS = 14L * 24 * 60 * 60 * 1_000
         val JSON_LD = Regex("""<script[^>]*type=["']application/ld\+json["'][^>]*>(.*?)</script>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))

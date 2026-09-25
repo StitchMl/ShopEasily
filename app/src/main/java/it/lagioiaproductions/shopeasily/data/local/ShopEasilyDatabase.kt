@@ -16,7 +16,7 @@ class CatalogConverters {
 
 @Database(
     entities = [StoreEntity::class, OfferEntity::class, SourceStatusEntity::class],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 @TypeConverters(CatalogConverters::class)
@@ -29,6 +29,11 @@ abstract class ShopEasilyDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE offers ADD COLUMN promotional INTEGER NOT NULL DEFAULT 1")
             }
         }
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE offers ADD COLUMN productImageVerified INTEGER NOT NULL DEFAULT 0")
+            }
+        }
 
         @Volatile private var instance: ShopEasilyDatabase? = null
 
@@ -37,7 +42,7 @@ abstract class ShopEasilyDatabase : RoomDatabase() {
                 context.applicationContext,
                 ShopEasilyDatabase::class.java,
                 "shopeasily.db",
-            ).addMigrations(MIGRATION_1_2).build().also { instance = it }
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { instance = it }
         }
     }
 }
