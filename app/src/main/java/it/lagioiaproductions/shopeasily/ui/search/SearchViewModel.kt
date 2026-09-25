@@ -164,14 +164,17 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
             )
             val allRanked = OfferRanking.apply(repository.search("").first(), filters)
             val storedStores = repository.storedStores()
-            val discoveredStores = repository.observeSourceStatuses().first().map { it.storeName }
-            val stores = (allRanked.map(Offer::storeName) + discoveredStores).distinct().sorted()
-            val selectedStore = _uiState.value.selectedStore?.takeIf(stores::contains)
             val results = if (query.isBlank()) allRanked else OfferRanking.apply(repository.search(query).first(), filters)
             val selectedIds = preferencesRepository.manualCartOfferIds.first()
-            val visibleOffers = results.filter { offer ->
-                (selectedStore == null || offer.storeName == selectedStore) &&
-                    (!_uiState.value.showSelectedOnly || offer.id in selectedIds)
+            // The store menu represents the products the user can actually see,
+            // not every discovered point of sale or temporarily empty source.
+            val displayableResults = results.filter { offer ->
+                !_uiState.value.showSelectedOnly || offer.id in selectedIds
+            }
+            val stores = displayableResults.map(Offer::storeName).distinct().sorted()
+            val selectedStore = _uiState.value.selectedStore?.takeIf(stores::contains)
+            val visibleOffers = displayableResults.filter { offer ->
+                selectedStore == null || offer.storeName == selectedStore
             }
             val pendingItems = preferencesRepository.shoppingItems.first().filterNot { it.second }.map { it.first }
             val totalCandidates = allRanked.filter { selectedStore == null || it.storeName == selectedStore }
