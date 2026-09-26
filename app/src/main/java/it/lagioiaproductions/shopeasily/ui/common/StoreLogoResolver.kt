@@ -7,6 +7,8 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Typeface
+import com.caverock.androidsvg.SVG
+import java.io.ByteArrayInputStream
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
@@ -47,9 +49,12 @@ object StoreLogoResolver {
 
     private fun logoCandidates(storeName: String, website: String?): List<String> = buildList {
         OFFICIAL_LOGOS.entries.firstOrNull { storeMatchesBrand(storeName, it.key) }?.value?.let(::add)
-        val homepage = website?.let(::normalizeWebsite)
-            ?: OFFICIAL_DOMAINS.entries.firstOrNull { storeMatchesBrand(storeName, it.key) }
-                ?.value?.let { "https://$it" }
+        val officialHomepage = OFFICIAL_DOMAINS.entries
+            .firstOrNull { storeMatchesBrand(storeName, it.key) }
+            ?.value?.let { "https://$it" }
+        // Offer records often contain an aggregator or flyer URL. A known chain
+        // must always resolve its identity from its official website first.
+        val homepage = officialHomepage ?: website?.let(::normalizeWebsite)
         if (homepage != null) {
             addAll(discoverIcons(homepage))
             runCatching {
@@ -98,9 +103,28 @@ object StoreLogoResolver {
 
     private fun downloadBitmap(value: String): Bitmap? = runCatching {
         val connection = open(value)
-        val type = connection.contentType.orEmpty()
-        if (type.contains("svg", true)) return@runCatching null
-        connection.inputStream.use(BitmapFactory::decodeStream).also { connection.disconnect() }
+        try {
+            val type = connection.contentType.orEmpty()
+            val bytes = connection.inputStream.use { it.readBytes() }
+            if (type.contains("svg", true) || value.substringBefore('?').endsWith(".svg", true)) {
+                decodeSvg(bytes)
+            } else {
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            }
+        } finally {
+            connection.disconnect()
+        }
+    }.getOrNull()
+
+    private fun decodeSvg(bytes: ByteArray): Bitmap? = runCatching {
+        val svg = SVG.getFromInputStream(ByteArrayInputStream(bytes))
+        val bitmap = Bitmap.createBitmap(SVG_RENDER_SIZE, SVG_RENDER_SIZE, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.drawColor(Color.TRANSPARENT)
+        svg.setDocumentWidth(SVG_RENDER_SIZE.toFloat())
+        svg.setDocumentHeight(SVG_RENDER_SIZE.toFloat())
+        svg.renderToCanvas(canvas)
+        bitmap
     }.getOrNull()
 
     private fun open(value: String) = (URL(value).openConnection() as HttpURLConnection).apply {
@@ -137,6 +161,7 @@ object StoreLogoResolver {
     }
 
     private const val SIZE = 64
+    private const val SVG_RENDER_SIZE = 256
     private const val MAX_HTML_CHARS = 256_000
     private val OFFICIAL_DOMAINS = mapOf(
         "Esselunga" to "www.esselunga.it",
@@ -163,5 +188,11 @@ object StoreLogoResolver {
     )
     private val OFFICIAL_LOGOS = mapOf(
         "Eurospin" to "https://www.eurospin.it/wp-content/themes/eurospin/assets/images/obj/logo.png",
+        "Carrefour" to "https://www.carrefour.it/on/demandware.static/Sites-carrefour-IT-Site/-/default/dwa8281882/images/favicons/favicon-196x196.png",
+        "Conad" to "https://www.conad.it/etc.clientlibs/conad-corporate/clientlibs/clientlib-site/resources/corporate/favicons/android-chrome-192x192.png",
+        "Coop" to "https://www.coop.it/sites/default/files/2020-07/logo-coop.png",
+        "Pewex" to "https://www.pewex-supermercati.it/images/ui/browser/favicon-180.png",
+        "Lidl" to "https://www.lidl.it/cdn/assets/logos/1.0.1/lidl-logo-shop-cdn.svg",
+        "Todis" to "https://www.todis.it/wp-content/uploads/2026/02/favicon-todis-300x300.png",
     )
 }

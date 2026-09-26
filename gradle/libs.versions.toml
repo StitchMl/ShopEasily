@@ -17,6 +17,7 @@ room = "2.8.5"
 ksp = "2.3.10"
 mlKitText = "16.0.1"
 jsoup = "1.23.2"
+androidSvg = "1.4"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -46,6 +47,7 @@ androidx-room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = 
 androidx-room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
 mlkit-text-recognition = { group = "com.google.mlkit", name = "text-recognition", version.ref = "mlKitText" }
 jsoup = { group = "org.jsoup", name = "jsoup", version.ref = "jsoup" }
+android-svg = { group = "com.caverock", name = "androidsvg-aar", version.ref = "androidSvg" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
