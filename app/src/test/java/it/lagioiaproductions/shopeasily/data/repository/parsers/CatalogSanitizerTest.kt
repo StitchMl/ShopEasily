@@ -6,6 +6,27 @@ import org.junit.Test
 
 class CatalogSanitizerTest {
     @Test
+    fun verifiesLocalStorePageUsingNameAndAddress() {
+        assertTrue(
+            CatalogSanitizer.pageReferencesStore(
+                "Listino prodotti di Bottega Verde Rossi, Via Appia 21 Roma",
+                "Bottega Verde Rossi",
+                "Via Appia Roma",
+            ),
+        )
+    }
+
+    @Test
+    fun rejectsSameGenericCategoryAtDifferentLocation() {
+        assertFalse(
+            CatalogSanitizer.pageReferencesStore(
+                "Panificio Bianchi - listino di Milano",
+                "Panificio Bianchi",
+                "Via Appia Roma",
+            ),
+        )
+    }
+    @Test
     fun rejectsImplausiblyLowParsedPrice() {
         assertFalse(CatalogSanitizer.isPlausible("Pasta di Semola Rummo 500 g", 0.08, "Esselunga", "https://esselunga.it", null))
     }

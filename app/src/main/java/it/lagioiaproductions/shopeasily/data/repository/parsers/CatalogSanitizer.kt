@@ -24,6 +24,22 @@ object CatalogSanitizer {
         return storeTokens.any(normalizedUrl::contains)
     }
 
+    /** Verifies search results whose domain is different from the shop name. */
+    fun pageReferencesStore(pageText: String, storeName: String, locationHint: String): Boolean {
+        val page = normalize(pageText)
+        val nameTokens = meaningfulTokens(storeName)
+        if (nameTokens.isEmpty()) return false
+        val requiredNameMatches = if (nameTokens.size == 1) 1 else 2
+        if (nameTokens.count(page::contains) < requiredNameMatches) return false
+        val locationTokens = meaningfulTokens(locationHint)
+        return locationTokens.isEmpty() || locationTokens.any(page::contains)
+    }
+
+    private fun meaningfulTokens(value: String): List<String> = normalize(value)
+        .split(Regex("[^a-z0-9]+"))
+        .filter { it.length >= 4 && it !in genericStoreWords }
+        .distinct()
+
     private fun normalize(value: String): String = Normalizer.normalize(value, Normalizer.Form.NFD)
         .replace(Regex("\\p{M}+"), "")
         .lowercase(Locale.ROOT)

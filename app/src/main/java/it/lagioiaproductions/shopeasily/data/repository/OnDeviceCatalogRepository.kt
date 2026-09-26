@@ -52,6 +52,7 @@ data class NearbyStore(
     val longitude: Double,
     val distanceMeters: Int,
     val sustainable: Boolean,
+    val searchContext: String = "",
 )
 
 class OnDeviceCatalogRepository(
@@ -207,7 +208,7 @@ class OnDeviceCatalogRepository(
         prioritizedShops.forEachIndexed { index, shop ->
             val directCatalogs = knownPublicCatalogSources(shop.name)
             val sources = (directCatalogs + listOfNotNull(shop.website) +
-                if (directCatalogs.isEmpty() && shop.website == null) discoverPublicSources(shop.name) else emptyList())
+                if (directCatalogs.isEmpty() && shop.website == null) discoverPublicSources(shop.name, shop.searchContext) else emptyList())
                 .distinct().take(MAX_SOURCE_PAGES_PER_STORE)
             if (sources.isEmpty()) {
                 dao.upsertStatus(shop.status(SourceState.UNAVAILABLE, now, 0, "Sito non indicato"))
@@ -232,7 +233,7 @@ class OnDeviceCatalogRepository(
                 }
                 val initial = sources.flatMap(::scan)
                 val fallbackSources = if (initial.isEmpty() && shop.website != null) {
-                    discoverPublicSources(shop.name).filterNot(sources::contains).take(MAX_DISCOVERED_SOURCES)
+                    discoverPublicSources(shop.name, shop.searchContext).filterNot(sources::contains).take(MAX_DISCOVERED_SOURCES)
                 } else {
                     emptyList()
                 }
@@ -300,6 +301,10 @@ class OnDeviceCatalogRepository(
                         distanceMeters = distanceMeters(latitude, longitude, shopLatitude, shopLongitude),
                         sustainable = tags.optString("organic") in setOf("yes", "only") ||
                             tags.optString("fair_trade") == "yes" || tags.optString("produce") == "local",
+                        searchContext = listOf(
+                            tags.optString("addr:street"), tags.optString("addr:city"),
+                            tags.optString("addr:postcode"), tags.optString("brand"),
+                        ).filter(String::isNotBlank).joinToString(" "),
                     ),
                 )
             }
@@ -345,21 +350,31 @@ class OnDeviceCatalogRepository(
     }
 
     /** Finds public catalogue/offer pages when OpenStreetMap has no website or the main site has no parsable offers. */
-    private fun discoverPublicSources(storeName: String): List<String> {
-        val query = URLEncoder.encode(
-            "$storeName prodotti prezzi spesa online offerte volantino catalogo",
-            Charsets.UTF_8.name(),
+    private fun discoverPublicSources(storeName: String, searchContext: String = ""): List<String> {
+        val queries = listOf(
+            "\"$storeName\" $searchContext prezzi listino prodotti menu",
+            "\"$storeName\" $searchContext offerte volantino catalogo",
         )
-        val html = request("https://html.duckduckgo.com/html/?q=$query")?.toString(Charsets.UTF_8) ?: return emptyList()
-        return SEARCH_RESULT_LINK.findAll(html).mapNotNull { match ->
-            val raw = match.groupValues[1].replace("&amp;", "&")
-            val encodedTarget = Regex("[?&]uddg=([^&]+)").find(raw)?.groupValues?.get(1)
-            val target = encodedTarget?.let { URLDecoder.decode(it, Charsets.UTF_8.name()) } ?: raw
-            target.takeIf(::isPublicUrl)?.takeIf { CatalogSanitizer.sourceReferencesStore(it, storeName) }
-        }.filterNot { url ->
+        val candidates = queries.flatMap { queryText ->
+            val query = URLEncoder.encode(queryText, Charsets.UTF_8.name())
+            val html = request("https://html.duckduckgo.com/html/?q=$query")?.toString(Charsets.UTF_8)
+                ?: return@flatMap emptyList()
+            searchResultUrls(html)
+        }
+        return candidates.filterNot { url ->
             val host = runCatching { URI(url).host.orEmpty() }.getOrDefault("")
             host.contains("duckduckgo.com") || host.contains("facebook.com") || host.contains("instagram.com")
-        }.distinct().take(MAX_DISCOVERED_SOURCES).toList()
+        }.distinct().filter { url ->
+            CatalogSanitizer.sourceReferencesStore(url, storeName) || verifiedStorePage(url, storeName, searchContext)
+        }.take(MAX_DISCOVERED_SOURCES)
+    }
+
+    private fun verifiedStorePage(url: String, storeName: String, searchContext: String): Boolean {
+        val bytes = request(url) ?: return false
+        if (bytes.size > MAX_VERIFICATION_BYTES) return false
+        val text = runCatching { org.jsoup.Jsoup.parse(bytes.toString(Charsets.UTF_8), url).text() }
+            .getOrDefault("")
+        return CatalogSanitizer.pageReferencesStore(text, storeName, searchContext)
     }
 
     private fun knownPublicCatalogSources(storeName: String): List<String> {
@@ -742,6 +757,7 @@ class OnDeviceCatalogRepository(
         )
         const val MAX_PRODUCT_DETAIL_PAGES = 12
         const val MAX_DOCUMENT_BYTES = 15 * 1024 * 1024
+        const val MAX_VERIFICATION_BYTES = 2 * 1024 * 1024
         const val OFFER_TTL_MILLIS = 14L * 24 * 60 * 60 * 1_000
         val JSON_LD = Regex("""<script[^>]*type=["']application/ld\+json["'][^>]*>(.*?)</script>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
         val SEARCH_RESULT_LINK = Regex("""href=["']([^"']*(?:uddg=|https?%3A%2F%2F)[^"']*)["']""", RegexOption.IGNORE_CASE)

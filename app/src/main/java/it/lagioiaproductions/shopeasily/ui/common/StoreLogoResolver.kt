@@ -12,6 +12,7 @@ import java.net.URI
 import java.net.URL
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
+import org.jsoup.Jsoup
 
 object StoreLogoResolver {
     private val cache = ConcurrentHashMap<String, Bitmap>()
@@ -45,12 +46,12 @@ object StoreLogoResolver {
     }
 
     private fun logoCandidates(storeName: String, website: String?): List<String> = buildList {
-        OFFICIAL_LOGOS.entries.firstOrNull { storeName.contains(it.key, true) }?.value?.let(::add)
+        OFFICIAL_LOGOS.entries.firstOrNull { storeMatchesBrand(storeName, it.key) }?.value?.let(::add)
         val homepage = website?.let(::normalizeWebsite)
-            ?: OFFICIAL_DOMAINS.entries.firstOrNull { storeName.contains(it.key, true) }
+            ?: OFFICIAL_DOMAINS.entries.firstOrNull { storeMatchesBrand(storeName, it.key) }
                 ?.value?.let { "https://$it" }
         if (homepage != null) {
-            discoverIcon(homepage)?.let(::add)
+            addAll(discoverIcons(homepage))
             runCatching {
                 val uri = URI(homepage)
                 "${uri.scheme}://${uri.authority}/favicon.ico"
@@ -58,7 +59,7 @@ object StoreLogoResolver {
         }
     }.distinct()
 
-    private fun discoverIcon(homepage: String): String? = runCatching {
+    private fun discoverIcons(homepage: String): List<String> = runCatching {
         val connection = open(homepage)
         val html = try {
             connection.inputStream.bufferedReader().use { reader ->
@@ -69,13 +70,31 @@ object StoreLogoResolver {
         } finally {
             connection.disconnect()
         }
-        val tag = LINK_TAG.findAll(html)
-            .map(MatchResult::value)
-            .firstOrNull { ICON_REL.containsMatchIn(it) }
-            ?: return@runCatching null
-        val href = HREF.find(tag)?.groupValues?.get(1) ?: return@runCatching null
-        URI(homepage).resolve(href).toString()
-    }.getOrNull()
+        val document = Jsoup.parse(html, homepage)
+        buildList {
+            // Prefer touch icons: they are normally a clean, high-resolution PNG.
+            document.select("link[rel~=apple-touch-icon], link[rel~=apple-touch-icon-precomposed]")
+                .mapNotNullTo(this) { it.absUrl("href").takeIf(String::isNotBlank) }
+            document.select("link[rel~=icon]")
+                .sortedByDescending { iconScore(it.attr("href"), it.attr("type"), it.attr("sizes")) }
+                .mapNotNullTo(this) { it.absUrl("href").takeIf(String::isNotBlank) }
+            document.select("meta[property=og:logo], meta[name=logo], meta[itemprop=logo]")
+                .mapNotNullTo(this) { it.absUrl("content").takeIf(String::isNotBlank) }
+            document.select("img[src]")
+                .filter { element ->
+                    listOf(element.id(), element.className(), element.attr("alt"), element.attr("src"))
+                        .any { it.contains("logo", true) }
+                }
+                .mapNotNullTo(this) { it.absUrl("src").takeIf(String::isNotBlank) }
+        }.distinct()
+    }.getOrDefault(emptyList())
+
+    private fun iconScore(href: String, type: String, sizes: String): Int =
+        (if (type.contains("png", true) || href.substringBefore('?').endsWith(".png", true)) 100 else 0) +
+            sizes.substringBefore('x').toIntOrNull()?.coerceAtMost(96).orZero() -
+            if (type.contains("svg", true) || href.substringBefore('?').endsWith(".svg", true)) 200 else 0
+
+    private fun Int?.orZero(): Int = this ?: 0
 
     private fun downloadBitmap(value: String): Bitmap? = runCatching {
         val connection = open(value)
@@ -110,11 +129,15 @@ object StoreLogoResolver {
     private fun normalizeWebsite(value: String): String =
         if (value.startsWith("http://") || value.startsWith("https://")) value else "https://$value"
 
+    private fun storeMatchesBrand(storeName: String, brand: String): Boolean {
+        val nameTokens = storeName.lowercase(Locale.ROOT).split(Regex("[^\\p{L}\\p{N}]+"))
+        val brandTokens = brand.lowercase(Locale.ROOT).split(Regex("[^\\p{L}\\p{N}]+"))
+            .filter(String::isNotBlank)
+        return brandTokens.isNotEmpty() && brandTokens.all(nameTokens::contains)
+    }
+
     private const val SIZE = 64
     private const val MAX_HTML_CHARS = 256_000
-    private val LINK_TAG = Regex("""<link\b[^>]*>""", RegexOption.IGNORE_CASE)
-    private val ICON_REL = Regex("""rel\s*=\s*["'][^"']*(?:icon|apple-touch-icon)[^"']*["']""", RegexOption.IGNORE_CASE)
-    private val HREF = Regex("""href\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
     private val OFFICIAL_DOMAINS = mapOf(
         "Esselunga" to "www.esselunga.it",
         "NaturaSì" to "www.naturasi.it",
@@ -125,6 +148,18 @@ object StoreLogoResolver {
         "Eurospin" to "www.eurospin.it",
         "Cortilia" to "www.cortilia.it",
         "Eataly" to "www.eataly.net",
+        "Todis" to "www.todis.it",
+        "Pewex" to "www.pewex-supermercati.it",
+        "Pam" to "www.pampanorama.it",
+        "Panorama" to "www.pampanorama.it",
+        "Aldi" to "www.aldi.it",
+        "MD" to "www.mdspa.it",
+        "Penny" to "www.penny.it",
+        "Decò" to "www.mydeco.it",
+        "Deco" to "www.mydeco.it",
+        "Iper La grande i" to "www.iper.it",
+        "In's" to "www.insmercato.it",
+        "Tigota" to "www.tigota.it",
     )
     private val OFFICIAL_LOGOS = mapOf(
         "Eurospin" to "https://www.eurospin.it/wp-content/themes/eurospin/assets/images/obj/logo.png",
