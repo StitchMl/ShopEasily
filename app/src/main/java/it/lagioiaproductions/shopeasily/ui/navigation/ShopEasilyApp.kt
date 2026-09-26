@@ -15,7 +15,7 @@ import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -40,8 +40,10 @@ private enum class Destination(
 
 @Composable
 fun ShopEasilyApp() {
-    var destination by rememberSaveable { mutableStateOf(Destination.SEARCH) }
-    var showInfo by rememberSaveable { mutableStateOf(false) }
+    // Start every fresh app process on Home so location-based catalog refresh
+    // begins automatically even if the previous session ended in Info/Settings.
+    var destination by remember { mutableStateOf(Destination.SEARCH) }
+    var showInfo by remember { mutableStateOf(false) }
     val searchViewModel: SearchViewModel = viewModel()
 
     Scaffold(

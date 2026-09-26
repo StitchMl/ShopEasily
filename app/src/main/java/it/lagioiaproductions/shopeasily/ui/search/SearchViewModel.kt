@@ -23,7 +23,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.asin
 import kotlin.math.cos
 import kotlin.math.pow
@@ -71,6 +73,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     private var locationRefreshJob: Job? = null
     private var lastRefreshLocation: Pair<Double, Double>? = null
     private var lastRefreshAt: Long = 0L
+    private var lastDisplayableResults: List<Offer> = emptyList()
 
     init {
         search("")
@@ -124,7 +127,10 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun selectStore(storeName: String?) {
-        _uiState.value = _uiState.value.copy(selectedStore = storeName)
+        val immediate = lastDisplayableResults.filter { offer ->
+            storeName == null || offer.storeName.equals(storeName, ignoreCase = true)
+        }
+        _uiState.value = _uiState.value.copy(selectedStore = storeName, offers = immediate)
         search(_uiState.value.query)
     }
 
@@ -165,22 +171,33 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 includeLoyaltyOffers = preferences.includeLoyaltyOffers,
                 loyaltyCards = preferences.loyaltyCards,
             )
-            val allRanked = OfferRanking.apply(repository.search("").first(), filters)
+            val allOffers = repository.search("").first()
+            val allRanked = withContext(Dispatchers.Default) { OfferRanking.apply(allOffers, filters) }
             val storedStores = repository.storedStores()
-            val results = if (query.isBlank()) allRanked else OfferRanking.apply(repository.search(query).first(), filters)
+            val results = if (query.isBlank()) allRanked else allRanked.filter { offer ->
+                offer.productName.contains(query, ignoreCase = true) || offer.storeName.contains(query, ignoreCase = true)
+            }
             val selectedIds = preferencesRepository.manualCartOfferIds.first()
             // The store menu represents the products the user can actually see,
             // not every discovered point of sale or temporarily empty source.
             val displayableResults = results.filter { offer ->
                 !_uiState.value.showSelectedOnly || offer.id in selectedIds
             }
-            val stores = displayableResults.map(Offer::storeName).distinct().sorted()
-            val selectedStore = _uiState.value.selectedStore?.takeIf(stores::contains)
+            lastDisplayableResults = displayableResults
+            val stores = displayableResults.map(Offer::storeName)
+                .groupBy { it.trim().lowercase(Locale.ROOT) }
+                .values.map { names -> names.minBy { name -> name.count(Char::isUpperCase) } }
+                .sortedBy { it.lowercase(Locale.ROOT) }
+            val selectedStore = _uiState.value.selectedStore?.let { selected ->
+                stores.firstOrNull { it.equals(selected, ignoreCase = true) }
+            }
             val visibleOffers = displayableResults.filter { offer ->
-                selectedStore == null || offer.storeName == selectedStore
+                selectedStore == null || offer.storeName.equals(selectedStore, ignoreCase = true)
             }
             val pendingItems = preferencesRepository.shoppingItems.first().filterNot { it.second }.map { it.first }
-            val totalCandidates = allRanked.filter { selectedStore == null || it.storeName == selectedStore }
+            val totalCandidates = allRanked.filter {
+                selectedStore == null || it.storeName.equals(selectedStore, ignoreCase = true)
+            }
             val matchedPrices = pendingItems.mapNotNull { requested ->
                 totalCandidates.filter { offer ->
                     offer.productName.contains(requested, ignoreCase = true) ||
@@ -210,8 +227,8 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 filters = filters,
                 availableStores = stores,
                 storeWebsites = stores.associateWith { name ->
-                    allRanked.firstOrNull { it.storeName == name }?.storeWebsite
-                        ?: storedStores.firstOrNull { it.name == name }?.website
+                    allRanked.firstOrNull { it.storeName.equals(name, ignoreCase = true) }?.storeWebsite
+                        ?: storedStores.firstOrNull { it.name.equals(name, ignoreCase = true) }?.website
                 },
                 selectedStore = selectedStore,
                 shoppingTotal = matchedPrices.sum(),

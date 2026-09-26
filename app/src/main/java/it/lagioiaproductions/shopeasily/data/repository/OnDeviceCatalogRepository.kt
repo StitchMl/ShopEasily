@@ -19,6 +19,7 @@ import it.lagioiaproductions.shopeasily.data.repository.parsers.ChainSourceAdapt
 import it.lagioiaproductions.shopeasily.data.repository.parsers.OcrFlyerReader
 import it.lagioiaproductions.shopeasily.data.repository.parsers.OfferTextParser
 import it.lagioiaproductions.shopeasily.data.repository.parsers.HtmlProductParser
+import it.lagioiaproductions.shopeasily.data.repository.parsers.CatalogSanitizer
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.net.HttpURLConnection
@@ -102,7 +103,11 @@ class OnDeviceCatalogRepository(
         migrateLegacyCacheIfNeeded()
         val sustainableStores = dao.stores().associate { it.id to it.sustainable }
         val cached = dao.activeOffers(System.currentTimeMillis())
-        val invalidIds = cached.filterNot { OfferTextParser.looksLikeProductName(it.productName) }.map(OfferEntity::id)
+        val invalidIds = cached.filterNot {
+            CatalogSanitizer.isPlausible(
+                it.productName, it.price, it.storeName, it.sourceUrl, it.productImageUrl,
+            )
+        }.map(OfferEntity::id)
         if (invalidIds.isNotEmpty()) dao.deleteOffers(invalidIds)
         val invalidIdSet = invalidIds.toSet()
         val local = cached.filter { it.id !in invalidIdSet }.map { entity ->
@@ -191,27 +196,47 @@ class OnDeviceCatalogRepository(
         dao.upsertStores(shops.map { it.toEntity(now) })
         dao.deleteExpired(now)
         var importedCount = 0
-        shops.forEachIndexed { index, shop ->
-            val sources = (shop.website?.let(::listOf) ?: discoverPublicSources(shop.name))
+        // A chain catalog is normally shared by many nearby branches. Parse it
+        // once and reuse the products with each branch's real name/distance,
+        // instead of spending hundreds of requests rescanning the same domain.
+        val sourceScanCache = mutableMapOf<String, List<Offer>>()
+        val prioritizedShops = shops.sortedWith(
+            compareByDescending<NearbyStore> { knownPublicCatalogSources(it.name).isNotEmpty() }
+                .thenBy(NearbyStore::distanceMeters),
+        )
+        prioritizedShops.forEachIndexed { index, shop ->
+            val directCatalogs = knownPublicCatalogSources(shop.name)
+            val sources = (directCatalogs + listOfNotNull(shop.website) +
+                if (directCatalogs.isEmpty() && shop.website == null) discoverPublicSources(shop.name) else emptyList())
                 .distinct().take(MAX_SOURCE_PAGES_PER_STORE)
             if (sources.isEmpty()) {
                 dao.upsertStatus(shop.status(SourceState.UNAVAILABLE, now, 0, "Sito non indicato"))
-                onProgress(index + 1, shops.size)
+                onProgress(index + 1, prioritizedShops.size)
                 return@forEachIndexed
             }
             val resolvedShop = shop.copy(website = sources.first())
             dao.upsertStores(listOf(resolvedShop.toEntity(now)))
             dao.upsertStatus(resolvedShop.status(SourceState.PENDING, now, 0, null))
             val result = runCatching {
-                val initial = sources.flatMap { source -> scanShop(resolvedShop.copy(website = source), latitude, longitude) }
+                fun scan(source: String): List<Offer> {
+                    val cacheKey = "${StoreDeduplicator.canonicalName(shop.name)}|$source"
+                    return sourceScanCache.getOrPut(cacheKey) {
+                        scanShop(resolvedShop.copy(website = source), latitude, longitude)
+                    }.map { offer ->
+                        offer.copy(
+                            storeName = shop.name,
+                            distanceMeters = shop.distanceMeters,
+                            storeWebsite = source,
+                        )
+                    }
+                }
+                val initial = sources.flatMap(::scan)
                 val fallbackSources = if (initial.isEmpty() && shop.website != null) {
                     discoverPublicSources(shop.name).filterNot(sources::contains).take(MAX_DISCOVERED_SOURCES)
                 } else {
                     emptyList()
                 }
-                (initial + fallbackSources.flatMap { source ->
-                    scanShop(resolvedShop.copy(website = source), latitude, longitude)
-                })
+                (initial + fallbackSources.flatMap(::scan))
                     .distinctBy { Triple(it.productName.lowercase(Locale.ROOT), it.price, it.storeName) }
             }
             result.onSuccess { offers ->
@@ -229,7 +254,7 @@ class OnDeviceCatalogRepository(
             }.onFailure { error ->
                 dao.upsertStatus(resolvedShop.status(SourceState.UNAVAILABLE, now, 0, error.javaClass.simpleName))
             }
-            onProgress(index + 1, shops.size)
+            onProgress(index + 1, prioritizedShops.size)
         }
         importedCount
     }
@@ -330,11 +355,18 @@ class OnDeviceCatalogRepository(
             val raw = match.groupValues[1].replace("&amp;", "&")
             val encodedTarget = Regex("[?&]uddg=([^&]+)").find(raw)?.groupValues?.get(1)
             val target = encodedTarget?.let { URLDecoder.decode(it, Charsets.UTF_8.name()) } ?: raw
-            target.takeIf(::isPublicUrl)
+            target.takeIf(::isPublicUrl)?.takeIf { CatalogSanitizer.sourceReferencesStore(it, storeName) }
         }.filterNot { url ->
             val host = runCatching { URI(url).host.orEmpty() }.getOrDefault("")
             host.contains("duckduckgo.com") || host.contains("facebook.com") || host.contains("instagram.com")
         }.distinct().take(MAX_DISCOVERED_SOURCES).toList()
+    }
+
+    private fun knownPublicCatalogSources(storeName: String): List<String> {
+        val canonical = StoreDeduplicator.canonicalName(storeName)
+        val slug = PUBLIC_CATALOG_SLUGS.entries.firstOrNull { (name, _) -> canonical.contains(name) }?.value
+            ?: return emptyList()
+        return listOf("https://www.doveconviene.it/volantino/$slug")
     }
 
     private fun parseStructuredProducts(
@@ -606,7 +638,7 @@ class OnDeviceCatalogRepository(
             productName = productName,
             price = price,
             distanceMeters = store.distanceMeters,
-            productImageUrl = productImageUrl,
+            productImageUrl = productImageUrl?.takeUnless(CatalogSanitizer::isWholeFlyerImage),
             storeWebsite = store.website,
             sourceUrl = sourceUrl,
             parserId = ChainSourceAdapters.forStore(store.name, sourceUrl).id,
@@ -626,11 +658,13 @@ class OnDeviceCatalogRepository(
         price = price,
         unitPrice = null,
         distanceMeters = distanceMeters,
-        qualityScore = null,
-        sustainabilityLabels = if (sustainableStore) listOf("Negozio locale sostenibile") else emptyList(),
+        // Until a retailer exposes a product review, use the persisted parser
+        // confidence as a transparent quality-of-data estimate (1..5).
+        qualityScore = (confidence * 5.0).toFloat().coerceIn(1f, 5f),
+        sustainabilityLabels = inferredSustainabilityLabels(productName, sustainableStore),
         validUntil = null,
         imageKey = imageFor(productName),
-        productImageUrl = productImageUrl,
+        productImageUrl = productImageUrl?.takeUnless(CatalogSanitizer::isWholeFlyerImage),
         storeWebsite = storeWebsite,
         promotional = promotional,
         productImageVerified = productImageVerified,
@@ -663,6 +697,17 @@ class OnDeviceCatalogRepository(
         else -> ProductImageKey.OTHER
     }
 
+    private fun inferredSustainabilityLabels(name: String, sustainableStore: Boolean): List<String> = buildList {
+        val normalized = name.lowercase(Locale.ROOT)
+        if (Regex("\\b(bio|biologico|biologica|organic)\\b").containsMatchIn(normalized)) add("Biologico")
+        if (listOf("fairtrade", "fair trade", "equo", "equosolidale").any(normalized::contains)) add("Equosolidale")
+        if (listOf("km 0", "km0", "filiera corta", "locale").any(normalized::contains)) add("Filiera locale")
+        if (listOf("allevato all'aperto", "allevate a terra", "cruelty free", "benessere animale").any(normalized::contains)) {
+            add("Benessere animale")
+        }
+        if (sustainableStore) add("Negozio locale sostenibile")
+    }.distinct()
+
     private fun distanceMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Int {
         val p1 = Math.toRadians(lat1); val p2 = Math.toRadians(lat2)
         val dp = Math.toRadians(lat2 - lat1); val dl = Math.toRadians(lon2 - lon1)
@@ -681,6 +726,20 @@ class OnDeviceCatalogRepository(
         const val MAX_QUERY_STORES = 12
         const val MAX_QUERY_PAGES = 3
         val QUERY_STOP_WORDS = setOf("di", "da", "per", "con", "il", "la", "lo", "gli", "le")
+        val PUBLIC_CATALOG_SLUGS = mapOf(
+            "conad" to "conad",
+            "lidl" to "lidl",
+            "eurospin" to "eurospin",
+            "carrefour" to "carrefour-market",
+            "pam" to "pam",
+            "panorama" to "panorama",
+            "esselunga" to "esselunga",
+            "coop" to "coop",
+            "todis" to "todis",
+            "deco" to "deco",
+            "pewex" to "pewex",
+            "aldi" to "aldi",
+        )
         const val MAX_PRODUCT_DETAIL_PAGES = 12
         const val MAX_DOCUMENT_BYTES = 15 * 1024 * 1024
         const val OFFER_TTL_MILLIS = 14L * 24 * 60 * 60 * 1_000

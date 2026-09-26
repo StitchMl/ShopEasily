@@ -149,12 +149,14 @@ fun SearchScreen(
     LaunchedEffect(locationGranted, locationRefresh) {
         if (!locationGranted) return@LaunchedEffect
         val client = LocationServices.getFusedLocationProviderClient(context)
+        // Start immediately from the last reliable fix; getCurrentLocation can
+        // remain pending indoors and previously prevented automatic scraping.
+        client.lastLocation.addOnSuccessListener { last ->
+            if (last != null) viewModel.refreshForLocation(last.latitude, last.longitude)
+        }
         client.getCurrentLocation(Priority.PRIORITY_BALANCED_POWER_ACCURACY, null)
             .addOnSuccessListener { location ->
                 if (location != null) viewModel.refreshForLocation(location.latitude, location.longitude)
-                else client.lastLocation.addOnSuccessListener { last ->
-                    if (last != null) viewModel.refreshForLocation(last.latitude, last.longitude)
-                }
             }
     }
 
@@ -619,8 +621,18 @@ private fun SortMode.icon(): ImageVector = when (this) {
 private fun SortMenu(selected: SortMode, onSelected: (SortMode) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     Box {
-        IconButton(onClick = { expanded = true }, modifier = Modifier.size(44.dp)) {
-            Icon(selected.icon(), contentDescription = "Ordina per ${selected.label}")
+        Surface(
+            onClick = { expanded = true },
+            shape = MaterialTheme.shapes.small,
+            color = MaterialTheme.colorScheme.surfaceVariant,
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 7.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(selected.icon(), contentDescription = "Ordina per ${selected.label}", modifier = Modifier.size(20.dp))
+                Text(selected.label, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 4.dp), maxLines = 1)
+            }
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             SortMode.entries.forEach { mode ->
