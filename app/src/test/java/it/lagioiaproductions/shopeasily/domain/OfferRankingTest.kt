@@ -41,6 +41,13 @@ class OfferRankingTest {
     }
 
     @Test
+    fun ordinaryNearbyProductDoesNotReceiveHighLeafScore() {
+        val ordinary = offer(id = 4, price = 2.0, distance = 300, sustainable = false)
+
+        assertTrue(ordinary.sustainabilityScore() < 40)
+    }
+
+    @Test
     fun loyaltyOfferRequiresTheMatchingOwnedCard() {
         val loyaltyOffer = offer(id = 3, price = 0.5, distance = 100, sustainable = false)
             .copy(storeName = "Market", loyaltyRequired = true)

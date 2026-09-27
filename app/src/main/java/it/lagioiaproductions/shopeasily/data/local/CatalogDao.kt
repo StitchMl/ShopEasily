@@ -15,6 +15,16 @@ interface CatalogDao {
     @Query("SELECT * FROM stores ORDER BY distanceMeters")
     suspend fun stores(): List<StoreEntity>
 
+    @Query("SELECT * FROM offers WHERE id IN (:ids)")
+    suspend fun offersByIds(ids: List<Long>): List<OfferEntity>
+
+    /** Emits whenever the offers table changes: used to refresh the UI silently. */
+    @Query("SELECT COUNT(*) + COALESCE(MAX(observedAt), 0) FROM offers")
+    fun observeCatalogVersion(): Flow<Long>
+
+    @Query("SELECT * FROM source_status WHERE storeId = :storeId")
+    suspend fun statusFor(storeId: String): SourceStatusEntity?
+
     @Query("SELECT * FROM source_status ORDER BY storeName")
     fun observeSourceStatuses(): Flow<List<SourceStatusEntity>>
 

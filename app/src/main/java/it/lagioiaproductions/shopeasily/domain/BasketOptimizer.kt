@@ -5,6 +5,7 @@ import it.lagioiaproductions.shopeasily.data.model.Store
 import it.lagioiaproductions.shopeasily.data.model.StoreChannel
 import it.lagioiaproductions.shopeasily.data.preferences.FuelType
 import it.lagioiaproductions.shopeasily.data.preferences.VehicleType
+import java.util.Locale
 
 data class TransportProfile(
     val vehicle: VehicleType = VehicleType.CAR,
@@ -31,9 +32,11 @@ data class BasketPlan(
     val estimatedTravelCost: Double,
     val estimatedEmissionKgCo2: Double,
     val ethicalRiskPenalty: Double,
+    /** Requested items that no store of this plan sells. */
+    val missingItems: List<String> = emptyList(),
 ) {
     val monetaryTotal: Double = productsTotal + serviceCosts + estimatedTravelCost
-    val unavailableItems: Int = assignments.count { it.catalogItem.price.isNaN() }
+    val unavailableItems: Int = missingItems.size + assignments.count { it.catalogItem.price.isNaN() }
     val averageQuality: Double = assignments.mapNotNull { it.catalogItem.qualityScore }.average().let {
         if (it.isNaN()) 0.0 else it
     }
@@ -42,6 +45,21 @@ data class BasketPlan(
 }
 
 object BasketOptimizer {
+    /** Upper bound on candidate stores: keeps pair enumeration below ~1.300 plans. */
+    private const val MAX_CANDIDATE_STORES = 50
+
+    /**
+     * Finds the best one- or two-store baskets.
+     *
+     * The previous implementation filtered the whole catalogue for every store
+     * pair and every requested item (O(stores² × catalogue × items)); with a
+     * real on-device catalogue of thousands of prices that froze the UI thread
+     * for tens of seconds and Android killed the app. Candidates are now
+     * indexed once per (store, item), so each pair costs only O(items).
+     *
+     * Plans that cover only part of the list are kept (after the complete
+     * ones) so the user always gets an answer and sees what is missing.
+     */
     fun optimize(
         requestedItems: List<String>,
         catalog: List<CatalogPrice>,
@@ -49,19 +67,43 @@ object BasketOptimizer {
         transport: TransportProfile = TransportProfile(),
         goal: BasketGoal = BasketGoal.BALANCED,
     ): List<BasketPlan> {
-        if (requestedItems.isEmpty()) return emptyList()
-        val stores = catalog.map(CatalogPrice::store).distinctBy(Store::id)
-        val storeSets = stores.map(::listOf) + if (maximumStores >= 2) {
-            stores.flatMapIndexed { index, first ->
-                stores.drop(index + 1).map { second -> listOf(first, second) }
+        val requested = requestedItems.map(String::trim).filter(String::isNotBlank)
+            .distinctBy { it.lowercase(Locale.ROOT) }
+        if (requested.isEmpty() || catalog.isEmpty()) return emptyList()
+
+        // store id -> (item index -> best candidate for the goal)
+        val bestByStore = HashMap<Long, Array<CatalogPrice?>>()
+        val storesById = LinkedHashMap<Long, Store>()
+        val matchCache = HashMap<Pair<String, String>, Boolean>()
+        catalog.forEach { candidate ->
+            requested.forEachIndexed { index, item ->
+                val matches = matchCache.getOrPut(candidate.productName to item) { candidate.matches(item) }
+                if (!matches) return@forEachIndexed
+                storesById.putIfAbsent(candidate.store.id, candidate.store)
+                val slots = bestByStore.getOrPut(candidate.store.id) { arrayOfNulls(requested.size) }
+                val current = slots[index]
+                slots[index] = if (current == null) candidate else better(current, candidate, goal)
+            }
+        }
+        if (bestByStore.isEmpty()) return emptyList()
+
+        val candidates = storesById.values
+            .sortedWith(
+                compareByDescending<Store> { store -> bestByStore.getValue(store.id).count { it != null } }
+                    .thenBy { if (it.channel == StoreChannel.ONLINE) 0 else it.distanceMeters },
+            )
+            .take(MAX_CANDIDATE_STORES)
+        val storeSets = candidates.map(::listOf) + if (maximumStores >= 2) {
+            candidates.flatMapIndexed { index, first ->
+                candidates.drop(index + 1).map { second -> listOf(first, second) }
             }
         } else {
             emptyList()
         }
 
         val sortedPlans = storeSets.mapNotNull { selectedStores ->
-            buildPlan(requestedItems, catalog, selectedStores, transport, goal)
-        }.sortedWith(comparator(goal))
+            buildPlan(requested, bestByStore, selectedStores, transport, goal)
+        }.distinct().sortedWith(comparator(goal))
         val recommended = sortedPlans.take(3)
         val bestOnline = sortedPlans.firstOrNull { plan ->
             plan.stores.any { it.channel == StoreChannel.ONLINE }
@@ -71,23 +113,28 @@ object BasketOptimizer {
 
     private fun buildPlan(
         requestedItems: List<String>,
-        catalog: List<CatalogPrice>,
+        bestByStore: Map<Long, Array<CatalogPrice?>>,
         stores: List<Store>,
         transport: TransportProfile,
         goal: BasketGoal,
     ): BasketPlan? {
-        val available = catalog.filter { candidate -> candidate.store in stores }
-        val assignments = requestedItems.mapNotNull { requested ->
-            available.filter { candidate -> candidate.matches(requested) }
-                .let { candidates -> selectCandidate(candidates, goal) }
-                ?.let { BasketAssignment(requested, it) }
+        val missing = mutableListOf<String>()
+        val assignments = requestedItems.mapIndexedNotNull { index, requested ->
+            val options = stores.mapNotNull { bestByStore[it.id]?.get(index) }
+            val chosen = options.reduceOrNull { first, second -> better(first, second, goal) }
+            if (chosen == null) {
+                missing += requested
+                null
+            } else {
+                BasketAssignment(requested, chosen)
+            }
         }
-        if (assignments.size != requestedItems.size) return null
+        if (assignments.isEmpty()) return null
 
         val usedStores = assignments.map { it.catalogItem.store }.distinctBy(Store::id)
-        val subtotals = assignments.groupBy { it.catalogItem.store }
+        val subtotals = assignments.groupBy { it.catalogItem.store.id }
             .mapValues { (_, items) -> items.sumOf { it.catalogItem.price } }
-        if (usedStores.any { store -> subtotals.getValue(store) < store.minimumOrder }) return null
+        if (usedStores.any { store -> subtotals.getValue(store.id) < store.minimumOrder }) return null
 
         val deliveryFees = usedStores.filter { it.channel == StoreChannel.ONLINE }.sumOf(Store::deliveryFee)
         val physicalRoundTripKm = usedStores.filter { it.channel == StoreChannel.PHYSICAL }
@@ -104,18 +151,25 @@ object BasketOptimizer {
             estimatedTravelCost = physicalRoundTripKm * transport.costPerKm(),
             estimatedEmissionKgCo2 = deliveryEmissions + physicalRoundTripKm * transport.emissionKgPerKm(),
             ethicalRiskPenalty = laborPenalty,
+            missingItems = missing,
         )
     }
 
-    private fun selectCandidate(candidates: List<CatalogPrice>, goal: BasketGoal): CatalogPrice? = when (goal) {
-        BasketGoal.CHEAPEST -> candidates.minByOrNull(CatalogPrice::price)
-        BasketGoal.QUALITY -> candidates.maxWithOrNull(compareBy<CatalogPrice> { it.qualityScore ?: 0.0 }.thenByDescending { -it.price })
-        BasketGoal.ECOLOGICAL -> candidates.maxWithOrNull(compareBy<CatalogPrice> { it.ecological }.thenBy { it.qualityScore ?: 0.0 }.thenByDescending { -it.price })
-        BasketGoal.FAIR_TRADE -> candidates.maxWithOrNull(compareBy<CatalogPrice> { it.fairTrade }.thenBy { it.qualityScore ?: 0.0 }.thenByDescending { -it.price })
-        BasketGoal.BALANCED -> candidates.minByOrNull { candidate ->
-            candidate.price - (candidate.qualityScore ?: 0.0) * 0.08 -
-                (if (candidate.ecological) 0.18 else 0.0) - (if (candidate.fairTrade) 0.18 else 0.0)
+    /** Returns the preferred of two candidates for the same item according to the goal. */
+    private fun better(first: CatalogPrice, second: CatalogPrice, goal: BasketGoal): CatalogPrice {
+        val comparator: Comparator<CatalogPrice> = when (goal) {
+            BasketGoal.CHEAPEST -> compareBy { it.price }
+            BasketGoal.QUALITY -> compareByDescending<CatalogPrice> { it.qualityScore ?: 0.0 }.thenBy { it.price }
+            BasketGoal.ECOLOGICAL -> compareByDescending<CatalogPrice> { it.ecological }
+                .thenByDescending { it.qualityScore ?: 0.0 }.thenBy { it.price }
+            BasketGoal.FAIR_TRADE -> compareByDescending<CatalogPrice> { it.fairTrade }
+                .thenByDescending { it.qualityScore ?: 0.0 }.thenBy { it.price }
+            BasketGoal.BALANCED -> compareBy { candidate ->
+                candidate.price - (candidate.qualityScore ?: 0.0) * 0.08 -
+                    (if (candidate.ecological) 0.18 else 0.0) - (if (candidate.fairTrade) 0.18 else 0.0)
+            }
         }
+        return if (comparator.compare(second, first) < 0) second else first
     }
 
     private fun comparator(goal: BasketGoal): Comparator<BasketPlan> {
@@ -135,7 +189,7 @@ object BasketOptimizer {
     }
 
     private fun CatalogPrice.matches(requested: String): Boolean {
-        val normalized = requested.trim().lowercase()
-        return normalized in aliases || productName.lowercase().contains(normalized)
+        val normalized = requested.trim().lowercase(Locale.ROOT)
+        return normalized in aliases || ProductMatcher.matches(productName, requested)
     }
 }

@@ -7,23 +7,32 @@ import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import com.tom_roush.pdfbox.pdmodel.PDDocument
+import com.tom_roush.pdfbox.rendering.ImageType
 import com.tom_roush.pdfbox.rendering.PDFRenderer
+import java.util.concurrent.TimeUnit
 import java.io.File
 import java.io.FileOutputStream
 
 data class OcrFlyerOffer(val productName: String, val price: Double, val imagePath: String)
 
 object OcrFlyerReader {
-    fun readOffers(document: PDDocument, outputDirectory: File, key: String, maximumPages: Int = 8): List<OcrFlyerOffer> {
+    fun readOffers(document: PDDocument, outputDirectory: File, key: String, maximumPages: Int = 6): List<OcrFlyerOffer> {
         outputDirectory.mkdirs()
         val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
         return try {
             val renderer = PDFRenderer(document)
             buildList {
                 repeat(minOf(document.numberOfPages, maximumPages)) { page ->
-                    val bitmap = renderer.renderImageWithDPI(page, 144f)
+                    // RGB_565 at 120 dpi: ~2 MB per A4 page instead of ~8 MB (ARGB, 144 dpi).
+                    val bitmap = try {
+                        renderer.renderImageWithDPI(page, RENDER_DPI, ImageType.RGB)
+                    } catch (_: OutOfMemoryError) {
+                        return@repeat
+                    } catch (_: Exception) {
+                        return@repeat
+                    }
                     try {
-                        val result = Tasks.await(recognizer.process(InputImage.fromBitmap(bitmap, 0)))
+                        val result = Tasks.await(recognizer.process(InputImage.fromBitmap(bitmap, 0)), 60, TimeUnit.SECONDS)
                         result.textBlocks.forEachIndexed { blockIndex, block ->
                             // Pair each price with its immediately preceding text
                             // line. Using the whole OCR block mixed columns and
@@ -42,6 +51,9 @@ object OcrFlyerReader {
                                 add(OcrFlyerOffer(parsed.productName, parsed.price, file.absolutePath))
                             }
                         }
+                    } catch (_: OutOfMemoryError) {
+                        // Skip this page; the rest of the flyer is still useful.
+                    } catch (_: Exception) {
                     } finally {
                         bitmap.recycle()
                     }
@@ -52,13 +64,15 @@ object OcrFlyerReader {
         }
     }
 
+    private const val RENDER_DPI = 120f
+
     fun read(document: PDDocument, maximumPages: Int = 8): List<String> {
         val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
         return try {
             val renderer = PDFRenderer(document)
             buildList {
                 repeat(minOf(document.numberOfPages, maximumPages)) { page ->
-                    val bitmap = renderer.renderImageWithDPI(page, 144f)
+                    val bitmap = renderer.renderImageWithDPI(page, RENDER_DPI, ImageType.RGB)
                     try {
                         val result = Tasks.await(recognizer.process(InputImage.fromBitmap(bitmap, 0)))
                         addAll(result.text.lineSequence().map(String::trim).filter(String::isNotBlank))

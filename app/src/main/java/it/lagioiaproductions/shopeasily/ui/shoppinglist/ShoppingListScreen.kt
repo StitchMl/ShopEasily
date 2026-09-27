@@ -6,11 +6,15 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -22,12 +26,16 @@ import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.EditNote
 import androidx.compose.material.icons.rounded.LocalOffer
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.ImeAction
+import android.widget.Toast
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -44,6 +52,18 @@ fun ShoppingListScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var newItem by remember { mutableStateOf("") }
+    val context = LocalContext.current
+    LaunchedEffect(state.message) {
+        val message = state.message ?: return@LaunchedEffect
+        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+        viewModel.consumeMessage()
+    }
+    val submit = {
+        if (newItem.isNotBlank()) {
+            viewModel.addItem(newItem)
+            newItem = ""
+        }
+    }
 
     Column(
         modifier = modifier
@@ -58,13 +78,12 @@ fun ShoppingListScreen(
             onValueChange = { newItem = it },
             label = { Text("Nuovo articolo") },
             singleLine = true,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(onDone = { submit() }),
             modifier = Modifier.fillMaxWidth(),
         )
         Button(
-            onClick = {
-                viewModel.addItem(newItem)
-                newItem = ""
-            },
+            onClick = { submit() },
             enabled = newItem.isNotBlank(),
             modifier = Modifier.fillMaxWidth(),
         ) { Text("Aggiungi") }
@@ -88,7 +107,7 @@ fun ShoppingListScreen(
                         }
                     }
                 }
-                items(state.selectedItems, key = SelectedShoppingItem::offerId) { item ->
+                items(state.selectedItems, key = { "offer:" + it.offerId }) { item ->
                     SelectedItemCard(item, onRemove = { viewModel.removeSelectedItem(item.offerId) })
                 }
             }
@@ -105,7 +124,7 @@ fun ShoppingListScreen(
                     }
                 }
             }
-            items(state.items, key = ShoppingListItem::name) { item ->
+            items(state.items, key = { "item:" + it.name }) { item ->
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -127,9 +146,16 @@ fun ShoppingListScreen(
         }
         Button(
             onClick = viewModel::optimize,
-            enabled = state.items.isNotEmpty() || state.selectedItems.isNotEmpty(),
+            enabled = !state.optimizing && (state.items.isNotEmpty() || state.selectedItems.isNotEmpty()),
             modifier = Modifier.fillMaxWidth(),
-        ) { Text("Trova il carrello migliore") }
+        ) {
+            if (state.optimizing) {
+                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                Text("Calcolo in corso…", modifier = Modifier.padding(start = 8.dp))
+            } else {
+                Text("Trova il carrello migliore")
+            }
+        }
     }
 }
 
@@ -173,6 +199,13 @@ private fun BasketPlanCard(plan: BasketPlan) {
             plan.assignments.forEach { assignment ->
                 val promo = if (assignment.catalogItem.promotional) " · offerta" else ""
                 Text("${assignment.requestedItem}: ${currency.format(assignment.catalogItem.price)}$promo")
+            }
+            if (plan.missingItems.isNotEmpty()) {
+                Text(
+                    "Non trovati: ${plan.missingItems.joinToString(", ")}",
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                )
             }
             Text("Totale stimato: ${currency.format(plan.monetaryTotal)}", fontWeight = FontWeight.Bold)
             if (plan.serviceCosts > 0) Text("Consegna: ${currency.format(plan.serviceCosts)}")

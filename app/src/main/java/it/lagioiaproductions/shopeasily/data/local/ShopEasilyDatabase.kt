@@ -16,7 +16,7 @@ class CatalogConverters {
 
 @Database(
     entities = [StoreEntity::class, OfferEntity::class, SourceStatusEntity::class],
-    version = 3,
+    version = 8,
     exportSchema = false,
 )
 @TypeConverters(CatalogConverters::class)
@@ -35,6 +35,49 @@ abstract class ShopEasilyDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE stores ADD COLUMN sustainabilityScore INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE stores ADD COLUMN sustainabilityReasons TEXT")
+                db.execSQL("ALTER TABLE stores ADD COLUMN osmType TEXT")
+                db.execSQL("ALTER TABLE stores ADD COLUMN osmId INTEGER")
+                db.execSQL("ALTER TABLE offers ADD COLUMN labels TEXT")
+                // Old rows only had a boolean: keep them visible until the next background sync.
+                db.execSQL("UPDATE stores SET sustainabilityScore = 45 WHERE sustainable = 1")
+            }
+        }
+
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE stores ADD COLUMN brand TEXT")
+                db.execSQL("ALTER TABLE stores ADD COLUMN brandWikidata TEXT")
+            }
+        }
+
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE stores ADD COLUMN place TEXT")
+            }
+        }
+
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Earlier versions stored brands guessed from names ("Roma", "Iper"):
+                // drop them, the next sync stores only brands declared in OpenStreetMap.
+                db.execSQL("UPDATE stores SET brand = NULL")
+            }
+        }
+
+        private val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Offers read by earlier, less strict parsers (e.g. "Privacy policy 50 €", or
+                // products of namesake shops elsewhere) are dropped; the next sync re-reads
+                // every store with the new rules. Crowdsourced Open Prices tags are kept.
+                db.execSQL("DELETE FROM offers WHERE parserId != 'open-prices'")
+                db.execSQL("UPDATE stores SET website = NULL WHERE brand IS NULL")
+            }
+        }
+
         @Volatile private var instance: ShopEasilyDatabase? = null
 
         fun get(context: Context): ShopEasilyDatabase = instance ?: synchronized(this) {
@@ -42,7 +85,9 @@ abstract class ShopEasilyDatabase : RoomDatabase() {
                 context.applicationContext,
                 ShopEasilyDatabase::class.java,
                 "shopeasily.db",
-            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { instance = it }
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
+                .fallbackToDestructiveMigrationOnDowngrade(true)
+                .build().also { instance = it }
         }
     }
 }

@@ -26,6 +26,8 @@ import it.lagioiaproductions.shopeasily.ui.search.SearchViewModel
 import it.lagioiaproductions.shopeasily.ui.settings.SettingsScreen
 import it.lagioiaproductions.shopeasily.ui.shoppinglist.ShoppingListScreen
 import it.lagioiaproductions.shopeasily.ui.info.InfoScreen
+import it.lagioiaproductions.shopeasily.ui.sync.SyncStatusScreen
+import androidx.activity.compose.BackHandler
 
 private enum class Destination(
     val label: String,
@@ -44,6 +46,7 @@ fun ShopEasilyApp() {
     // begins automatically even if the previous session ended in Info/Settings.
     var destination by remember { mutableStateOf(Destination.SEARCH) }
     var showInfo by remember { mutableStateOf(false) }
+    var showSources by remember { mutableStateOf(false) }
     val searchViewModel: SearchViewModel = viewModel()
 
     Scaffold(
@@ -52,7 +55,7 @@ fun ShopEasilyApp() {
                 Destination.entries.forEach { item ->
                     NavigationBarItem(
                         selected = destination == item,
-                        onClick = { destination = item; showInfo = false },
+                        onClick = { destination = item; showInfo = false; showSources = false },
                         icon = { Icon(item.icon, contentDescription = item.description) },
                         label = { Text(item.label, maxLines = 1, style = MaterialTheme.typography.labelSmall) },
                     )
@@ -62,6 +65,9 @@ fun ShopEasilyApp() {
     ) { innerPadding ->
         if (showInfo) {
             InfoScreen(onBack = { showInfo = false }, modifier = Modifier.padding(innerPadding))
+        } else if (showSources) {
+            BackHandler { showSources = false }
+            SyncStatusScreen(modifier = Modifier.padding(innerPadding))
         } else when (destination) {
             Destination.SEARCH -> SearchScreen(
                 viewModel = searchViewModel,
@@ -72,6 +78,7 @@ fun ShopEasilyApp() {
             Destination.SETTINGS -> SettingsScreen(
                 modifier = Modifier.padding(innerPadding),
                 onOpenInfo = { showInfo = true },
+                onOpenSources = { showSources = true },
             )
         }
     }

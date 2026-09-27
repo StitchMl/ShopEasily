@@ -12,25 +12,30 @@ data class PriceHistoryUpdate(
 class PriceWatchRepository(context: Context) {
     private val preferences = context.getSharedPreferences("price_watch", Context.MODE_PRIVATE)
 
+    /**
+     * Must be called off the main thread. Uses `commit()` on the caller's
+     * thread and writes only changed values: the old version queued thousands of
+     * `apply()` writes on every search, which Android flushes synchronously when
+     * the activity pauses (a classic ANR).
+     */
     fun recordAndFindDrops(offers: List<Offer>): PriceHistoryUpdate {
         val minimums = offers.groupBy { normalize(it.productName) }.mapValues { (_, values) -> values.minOf(Offer::price) }
-        val drops = minimums.mapNotNull { (product, price) ->
-            val previous = preferences.getFloat("last:$product", Float.NaN).toDouble()
-            product.takeIf { !previous.isNaN() && price < previous }
-        }.toSet()
-        val historicalLows = minimums.count { (product, price) ->
-            val minimum = preferences.getFloat("min:$product", Float.NaN).toDouble()
-            minimum.isNaN() || price <= minimum
+        val drops = mutableSetOf<String>()
+        var historicalLows = 0
+        val editor = preferences.edit()
+        var changed = false
+        minimums.forEach { (product, price) ->
+            val value = price.toFloat()
+            val previous = preferences.getFloat("last:$product", Float.NaN)
+            val oldMinimum = preferences.getFloat("min:$product", Float.NaN)
+            val oldMaximum = preferences.getFloat("max:$product", Float.NaN)
+            if (!previous.isNaN() && value < previous) drops += product
+            if (oldMinimum.isNaN() || value <= oldMinimum) historicalLows++
+            if (previous != value) { editor.putFloat("last:$product", value); changed = true }
+            if (oldMinimum.isNaN() || value < oldMinimum) { editor.putFloat("min:$product", value); changed = true }
+            if (oldMaximum.isNaN() || value > oldMaximum) { editor.putFloat("max:$product", value); changed = true }
         }
-        preferences.edit().apply {
-            minimums.forEach { (product, price) ->
-                val oldMinimum = preferences.getFloat("min:$product", Float.NaN).toDouble()
-                val oldMaximum = preferences.getFloat("max:$product", Float.NaN).toDouble()
-                putFloat("last:$product", price.toFloat())
-                putFloat("min:$product", if (oldMinimum.isNaN()) price.toFloat() else minOf(oldMinimum, price).toFloat())
-                putFloat("max:$product", if (oldMaximum.isNaN()) price.toFloat() else maxOf(oldMaximum, price).toFloat())
-            }
-        }.apply()
+        if (changed) editor.commit()
         return PriceHistoryUpdate(drops, historicalLows)
     }
 

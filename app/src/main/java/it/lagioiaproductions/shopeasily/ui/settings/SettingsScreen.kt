@@ -30,6 +30,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.Storefront
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -62,6 +63,7 @@ fun SettingsScreen(
     modifier: Modifier = Modifier,
     viewModel: SettingsViewModel = viewModel(),
     onOpenInfo: () -> Unit = {},
+    onOpenSources: () -> Unit = {},
 ) {
     val preferences by viewModel.preferences.collectAsStateWithLifecycle()
     val vehicleLookup by viewModel.vehicleLookup.collectAsStateWithLifecycle()
@@ -96,6 +98,9 @@ fun SettingsScreen(
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.weight(1f),
             )
+            IconButton(onClick = onOpenSources) {
+                Icon(Icons.Rounded.Storefront, contentDescription = "Fonti dei prezzi per negozio")
+            }
             IconButton(onClick = onOpenInfo) {
                 Icon(Icons.Rounded.Info, contentDescription = "Come funziona ShopEasily")
             }

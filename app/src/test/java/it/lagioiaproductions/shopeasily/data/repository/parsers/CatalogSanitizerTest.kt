@@ -62,4 +62,11 @@ class CatalogSanitizerTest {
             ),
         )
     }
+
+    @Test
+    fun rejectsOfferNamingAnotherDiscoveredBrand() {
+        val brands = setOf("esselunga", "elite")
+        assertFalse(CatalogSanitizer.isPlausible("Yogurt greco", 1.29, "Elite", "https://www.esselunga.it/volantino", null, brands))
+        assertTrue(CatalogSanitizer.isPlausible("Yogurt greco", 1.29, "Elite Supermercati", "https://www.doveconviene.it/volantino/elite", null, brands))
+    }
 }

@@ -19,6 +19,18 @@ data class StoreEntity(
     val sustainable: Boolean,
     val source: String,
     val updatedAt: Long,
+    /** Leaf score 0..100 computed by StoreSustainability from public tags. */
+    val sustainabilityScore: Int = 0,
+    /** Evidence for the leaf score, separated by '|'. */
+    val sustainabilityReasons: String? = null,
+    /** OpenStreetMap element, used to query Open Prices for small shops. */
+    val osmType: String? = null,
+    val osmId: Long? = null,
+    /** Retail brand learnt from OpenStreetMap (brand tag or repeated name); null for independents. */
+    val brand: String? = null,
+    val brandWikidata: String? = null,
+    /** City/district from OSM address tags: never mistaken for a brand. */
+    val place: String? = null,
 )
 
 @Entity(
@@ -42,6 +54,8 @@ data class OfferEntity(
     val expiresAt: Long,
     val promotional: Boolean = true,
     val productImageVerified: Boolean = false,
+    /** Product sustainability labels from the source, separated by '|'. */
+    val labels: String? = null,
 )
 
 @Entity(tableName = "source_status")

@@ -47,11 +47,17 @@ fun SyncStatusScreen(modifier: Modifier = Modifier, viewModel: SyncStatusViewMod
     val statuses by viewModel.statuses.collectAsState()
     val lastScan = statuses.maxOfOrNull(SourceStatusEntity::lastAttemptAt)
     Column(modifier = modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp)) {
-        Text("Dati", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Text("Fonti dei prezzi", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         Text(
             lastScan?.let { "Ultimo controllo ${DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(it))}" }
                 ?: "In attesa della prima scansione",
             style = MaterialTheme.typography.bodySmall,
+        )
+        Text(
+            "Negozi: © OpenStreetMap" +
+                (if (it.lagioiaproductions.shopeasily.BuildConfig.GOOGLE_PLACES_API_KEY.isNotBlank()) ", Google Maps" else "") +
+                " · Prezzi: siti dei negozi, Open Prices (Open Food Facts)",
+            style = MaterialTheme.typography.labelSmall,
         )
         LazyColumn(
             modifier = Modifier.padding(top = 12.dp),
@@ -80,11 +86,13 @@ private fun StatusCard(status: SourceStatusEntity) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(status.storeName, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
                 Text(
-                    if (status.offerCount > 0) "${status.offerCount} offerte" else status.detail ?: "Nessuna offerta disponibile",
+                    if (status.offerCount > 0) "${status.offerCount} prezzi" else "Nessun prezzo",
                     style = MaterialTheme.typography.bodySmall,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
+                    fontWeight = FontWeight.SemiBold,
                 )
+                status.detail?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                }
             }
         }
     }

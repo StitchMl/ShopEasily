@@ -12,69 +12,69 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import it.lagioiaproductions.shopeasily.R
-import it.lagioiaproductions.shopeasily.data.model.isActiveOn
-import it.lagioiaproductions.shopeasily.data.model.isEligibleFor
 import it.lagioiaproductions.shopeasily.data.preferences.UserPreferencesRepository
-import it.lagioiaproductions.shopeasily.data.repository.FakeOffersRepository
-import it.lagioiaproductions.shopeasily.domain.currentOfferDay
+import it.lagioiaproductions.shopeasily.data.repository.OnDeviceCatalogRepository
+import it.lagioiaproductions.shopeasily.domain.ProductMatcher
+import java.util.Locale
 import kotlinx.coroutines.flow.first
 
+/**
+ * Notifies real promotions (from the on-device catalogue, not demo data) for
+ * items still to buy in the shopping list. Called after each background sync.
+ */
+object FlashOfferNotifier {
+    private const val CHANNEL_ID = "flash-offers"
+
+    suspend fun notifyIfRelevant(context: Context) {
+        val preferencesRepository = UserPreferencesRepository(context)
+        val preferences = preferencesRepository.preferences.first()
+        if (!preferences.flashNotificationsEnabled) return
+        if (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ActivityCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) return
+        val pending = preferencesRepository.shoppingItems.first().filterNot { it.second }.map { it.first }
+        if (pending.isEmpty()) return
+        val radius = preferences.radiusKm * 1_000
+        val offer = OnDeviceCatalogRepository(context).search("").first()
+            .filter { it.promotional && it.distanceMeters <= radius }
+            .filter { offer -> pending.any { ProductMatcher.matches(offer.productName, it) } }
+            .minByOrNull { it.price } ?: return
+        if (preferences.lastNotifiedOfferId == offer.id) return
+
+        createNotificationChannel(context)
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle("In offerta dalla tua lista")
+            .setContentText("${offer.productName} a € ${"%.2f".format(Locale.ITALY, offer.price)} da ${offer.storeName}")
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setAutoCancel(true)
+            .build()
+        runCatching { NotificationManagerCompat.from(context).notify(offer.id.toInt(), notification) }
+        preferencesRepository.setLastNotifiedOfferId(offer.id)
+    }
+
+    private fun createNotificationChannel(context: Context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(CHANNEL_ID, "Offerte lampo", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                description = "Offerte reali per gli articoli della tua lista della spesa"
+            }
+            context.getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+        }
+    }
+}
+
+/** Kept so that work enqueued by older versions still resolves; it delegates to the notifier. */
 class FlashOfferWorker(
     appContext: Context,
     workerParameters: WorkerParameters,
 ) : CoroutineWorker(appContext, workerParameters) {
     override suspend fun doWork(): Result {
-        val preferencesRepository = UserPreferencesRepository(applicationContext)
-        val preferences = preferencesRepository.preferences.first()
-        if (!preferences.flashNotificationsEnabled) return Result.success()
-
-        val offer = FakeOffersRepository().search("").first().firstOrNull {
-            it.flashOffer &&
-                it.isActiveOn(currentOfferDay()) &&
-                it.isEligibleFor(preferences.age)
-        } ?: return Result.success()
-        if (preferences.lastNotifiedOfferId == offer.id) return Result.success()
-
-        createNotificationChannel()
-        if (
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            ActivityCompat.checkSelfPermission(
-                applicationContext,
-                Manifest.permission.POST_NOTIFICATIONS,
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-            return Result.success()
-        }
-
-        val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
-            .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle("Offerta lampo ShopEasily")
-            .setContentText("${offer.productName} a € ${"%.2f".format(offer.price)} da ${offer.storeName}")
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setAutoCancel(true)
-            .build()
-
-        NotificationManagerCompat.from(applicationContext).notify(offer.id.toInt(), notification)
-        preferencesRepository.setLastNotifiedOfferId(offer.id)
+        runCatching { FlashOfferNotifier.notifyIfRelevant(applicationContext) }
         return Result.success()
-    }
-
-    private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "Offerte lampo",
-                NotificationManager.IMPORTANCE_HIGH,
-            ).apply {
-                description = "Avvisi per offerte brevi compatibili con le tue preferenze"
-            }
-            applicationContext.getSystemService(NotificationManager::class.java)
-                .createNotificationChannel(channel)
-        }
     }
 
     companion object {
         const val WORK_NAME = "flash-offer-check"
-        private const val CHANNEL_ID = "flash-offers"
     }
 }

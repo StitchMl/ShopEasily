@@ -59,9 +59,18 @@ import it.lagioiaproductions.shopeasily.data.preferences.UserPreferencesReposito
 import it.lagioiaproductions.shopeasily.data.repository.NearbyStore
 import it.lagioiaproductions.shopeasily.data.repository.OnDeviceCatalogRepository
 import it.lagioiaproductions.shopeasily.ui.common.StoreLogoResolver
+import it.lagioiaproductions.shopeasily.domain.StoreSustainabilityResult
+import it.lagioiaproductions.shopeasily.sync.CatalogSyncWorker
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.maps.MapLibreMap
@@ -89,10 +98,13 @@ import org.maplibre.geojson.Point
 @Composable
 fun MapScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    val repository = remember { OnDeviceCatalogRepository(context) }
+    val repository = remember { OnDeviceCatalogRepository(context.applicationContext) }
+    val lifecycleOwner = LocalLifecycleOwner.current
     var locationGranted by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
+                PackageManager.PERMISSION_GRANTED ||
+                ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) ==
                 PackageManager.PERMISSION_GRANTED,
         )
     }
@@ -110,7 +122,7 @@ fun MapScreen(modifier: Modifier = Modifier) {
     }
     val mapView = remember {
         MapView(context).apply {
-            onCreate(null); onStart(); onResume()
+            onCreate(null)
             getMapAsync { map ->
                 mapInstance = map
                 map.setStyle(Style.Builder().fromUri("asset://osm_style.json")) { style ->
@@ -139,55 +151,98 @@ fun MapScreen(modifier: Modifier = Modifier) {
         }
     }
 
+    // Stores already known are shown immediately, even offline.
+    LaunchedEffect(Unit) {
+        val known = runCatching { repository.storedStores() }.getOrDefault(emptyList())
+        if (stores.isEmpty() && known.isNotEmpty()) stores = known
+    }
+
     LaunchedEffect(locationGranted, refreshKey) {
         if (!locationGranted) return@LaunchedEffect
         isLoading = true
-        LocationServices.getFusedLocationProviderClient(context)
-            .getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
-            .addOnSuccessListener { location ->
-                if (location != null) userLocation = LatLng(location.latitude, location.longitude)
-                else isLoading = false
-            }
-            .addOnFailureListener { isLoading = false }
+        runCatching {
+            LocationServices.getFusedLocationProviderClient(context)
+                .getCurrentLocation(Priority.PRIORITY_BALANCED_POWER_ACCURACY, null)
+                .addOnSuccessListener { location ->
+                    if (location != null) userLocation = LatLng(location.latitude, location.longitude)
+                    else isLoading = false
+                }
+                .addOnFailureListener { isLoading = false }
+        }.onFailure { isLoading = false }
     }
 
     LaunchedEffect(userLocation, refreshKey) {
         val position = userLocation ?: return@LaunchedEffect
-        val radius = UserPreferencesRepository(context).preferences.first().radiusKm
+        val preferences = UserPreferencesRepository(context.applicationContext)
+        val radius = runCatching { preferences.preferences.first().radiusKm }.getOrDefault(10)
         isLoading = true
         val refreshedStores = runCatching {
             repository.nearbyStores(position.latitude, position.longitude, radius)
         }.getOrDefault(emptyList())
-        if (refreshedStores.isNotEmpty()) {
-            stores = refreshedStores
-        }
+        if (refreshedStores.isNotEmpty()) stores = refreshedStores
         isLoading = false
-        repository.synchronize(position.latitude, position.longitude, radius)
+        // Offers are refreshed by the background worker: never crawl from the UI.
+        runCatching { preferences.setLastLocation(position.latitude, position.longitude) }
+        CatalogSyncWorker.requestNow(context.applicationContext, position.latitude, position.longitude, force = refreshKey > 0)
     }
 
-    LaunchedEffect(userLocation, stores, styleReady) {
+    LaunchedEffect(userLocation, styleReady) {
         if (!styleReady) return@LaunchedEffect
         userLocation?.let { position ->
-            mapInstance?.style?.getSourceAs<GeoJsonSource>(USER_SOURCE)
-                ?.setGeoJson(Point.fromLngLat(position.longitude, position.latitude))
-            mapInstance?.cameraPosition = CameraPosition.Builder().target(position).zoom(13.5).build()
-        }
-        val style = mapInstance?.style ?: return@LaunchedEffect
-        val features = stores.mapIndexed { index, store ->
-            val logoKey = "store-logo-$index"
-            val bitmap = withContext(Dispatchers.IO) { StoreLogoResolver.load(store.name, store.website) }
-            style.addImage(logoKey, bitmap)
-            Feature.fromGeometry(Point.fromLngLat(store.longitude, store.latitude)).apply {
-                addStringProperty("name", store.name)
-                addStringProperty("logo", logoKey)
+            runCatching {
+                mapInstance?.style?.getSourceAs<GeoJsonSource>(USER_SOURCE)
+                    ?.setGeoJson(Point.fromLngLat(position.longitude, position.latitude))
+                mapInstance?.cameraPosition = CameraPosition.Builder().target(position).zoom(13.5).build()
             }
         }
-        style.getSourceAs<GeoJsonSource>(STORES_SOURCE)
-            ?.setGeoJson(FeatureCollection.fromFeatures(features))
     }
 
-    DisposableEffect(mapView) {
-        onDispose { mapView.onPause(); mapView.onStop(); mapView.onDestroy() }
+    LaunchedEffect(stores, styleReady) {
+        if (!styleReady) return@LaunchedEffect
+        val visibleStores = stores.take(MAX_MAP_MARKERS)
+        fun publish(logos: List<Bitmap?>) {
+            val style = mapInstance?.style?.takeIf { it.isFullyLoaded } ?: return
+            val features = visibleStores.mapIndexed { index, store ->
+                val logoKey = "store-logo-$index"
+                runCatching { style.addImage(logoKey, logos.getOrNull(index) ?: StoreLogoResolver.initialMarker(store.name)) }
+                Feature.fromGeometry(Point.fromLngLat(store.longitude, store.latitude)).apply {
+                    addStringProperty("name", store.name)
+                    addStringProperty("logo", logoKey)
+                }
+            }
+            runCatching {
+                style.getSourceAs<GeoJsonSource>(STORES_SOURCE)?.setGeoJson(FeatureCollection.fromFeatures(features))
+            }
+        }
+        // Markers appear at once with initials; official logos replace them when downloaded.
+        publish(emptyList())
+        val permits = Semaphore(6)
+        val logos = withContext(Dispatchers.IO) {
+            visibleStores.map { store ->
+                async {
+                    permits.withPermit { runCatching { StoreLogoResolver.load(store.name, store.website) }.getOrNull() }
+                }
+            }.awaitAll()
+        }
+        publish(logos)
+    }
+
+    // Follow the real lifecycle: the map used to stay "resumed" in background.
+    DisposableEffect(mapView, lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> mapView.onStart()
+                Lifecycle.Event.ON_RESUME -> mapView.onResume()
+                Lifecycle.Event.ON_PAUSE -> mapView.onPause()
+                Lifecycle.Event.ON_STOP -> mapView.onStop()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            runCatching { mapView.onPause(); mapView.onStop(); mapView.onDestroy() }
+        }
     }
 
     DisposableEffect(mapInstance, stores, styleReady) {
@@ -199,7 +254,7 @@ fun MapScreen(modifier: Modifier = Modifier) {
                 .firstOrNull()?.getStringProperty("name")
             val store = stores.firstOrNull { it.name == storeName }
             if (store != null) {
-                openNavigation(context, store)
+                runCatching { openNavigation(context, store) }
                 true
             } else {
                 false
@@ -260,7 +315,7 @@ fun MapScreen(modifier: Modifier = Modifier) {
                         StoreCard(
                             store = store,
                             onNavigate = {
-                                openNavigation(context, store)
+                                runCatching { openNavigation(context, store) }
                             },
                         )
                     }
@@ -322,14 +377,24 @@ private fun StoreCard(store: NearbyStore, onNavigate: () -> Unit) {
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false),
                     )
-                    if (store.sustainable) {
+                    if (store.sustainabilityScore >= StoreSustainabilityResult.LEAF_THRESHOLD) {
                         Icon(
                             Icons.Rounded.Eco,
-                            contentDescription = "Bio, locale o equosolidale",
+                            contentDescription = "Foglia ${store.sustainabilityScore} su 100: " +
+                                store.sustainabilityReasons.joinToString(", "),
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.padding(start = 4.dp).size(18.dp),
                         )
                     }
+                }
+                if (store.sustainabilityReasons.isNotEmpty()) {
+                    Text(
+                        store.sustainabilityReasons.first(),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
                 Text(
                     distanceLabel(store.distanceMeters),
@@ -361,3 +426,4 @@ private fun distanceLabel(meters: Int) = if (meters < 1_000) "$meters m" else "%
 private const val STORES_SOURCE = "stores"
 private const val USER_SOURCE = "user-position"
 private const val MAX_VISIBLE_STORES = 30
+private const val MAX_MAP_MARKERS = 120

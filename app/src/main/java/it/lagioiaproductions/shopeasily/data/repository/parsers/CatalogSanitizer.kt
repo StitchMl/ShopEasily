@@ -4,12 +4,34 @@ import java.text.Normalizer
 import java.util.Locale
 
 object CatalogSanitizer {
-    fun isPlausible(name: String, price: Double, storeName: String, sourceUrl: String, imageUrl: String?): Boolean {
+    /**
+     * [knownBrands] are the brands discovered automatically from OpenStreetMap in
+     * the user's area (canonical names). If the source or image address names one
+     * of them, the offer must belong to a store of that brand: this rejects, for
+     * example, a supermarket flyer wrongly attributed to a neighbourhood bakery.
+     */
+    fun isPlausible(
+        name: String,
+        price: Double,
+        storeName: String,
+        sourceUrl: String,
+        imageUrl: String?,
+        knownBrands: Collection<String> = emptySet(),
+    ): Boolean {
         if (price < MINIMUM_PLAUSIBLE_PRICE || !OfferTextParser.looksLikeProductName(name)) return false
         val evidence = normalize("$sourceUrl ${imageUrl.orEmpty()}")
         if (aggregatorHosts.any(evidence::contains) && !sourceReferencesStore(evidence, storeName)) return false
-        val detectedChain = chainAliases.entries.firstOrNull { (_, aliases) -> aliases.any(evidence::contains) }?.key
-        return detectedChain == null || chainAliases.getValue(detectedChain).any(normalize(storeName)::contains)
+        val evidenceTokens = evidence.split(Regex("[^a-z0-9]+")).filter(String::isNotBlank).toSet()
+        val compactEvidence = evidenceTokens.joinToString(" ")
+        val store = normalize(storeName).replace(Regex("[^a-z0-9]+"), " ")
+        // Only distinctive brand words (4+ letters) count as evidence of another chain.
+        val detected = knownBrands.map(::normalize).mapNotNull { brand ->
+            brand.split(Regex("[^a-z0-9]+")).filter { it.length >= 4 }.takeIf { it.isNotEmpty() }
+        }.filter { tokens -> evidenceTokens.containsAll(tokens) }
+        if (compactEvidence.isEmpty() || detected.isEmpty()) return true
+        val storeTokens = store.split(' ').filter(String::isNotBlank)
+        // The store matches if it shares a brand word, also glued ("Ipercoop" ↔ "coop").
+        return detected.any { tokens -> tokens.any { token -> storeTokens.any { it == token || it.endsWith(token) || token.endsWith(it) && it.length >= 4 } } }
     }
 
     fun isWholeFlyerImage(url: String?): Boolean {
@@ -19,9 +41,11 @@ object CatalogSanitizer {
 
     fun sourceReferencesStore(url: String, storeName: String): Boolean {
         val normalizedUrl = normalize(url)
+        val urlTokens = normalizedUrl.split(Regex("[^a-z0-9]+")).toSet()
         val storeTokens = normalize(storeName).split(Regex("[^a-z0-9]+"))
-            .filter { it.length >= 4 && it !in genericStoreWords }
-        return storeTokens.any(normalizedUrl::contains)
+            .filter { it.length >= 3 && it !in genericStoreWords }
+        // Short brand names (e.g. "Pam") must be a whole token of the address.
+        return storeTokens.any { token -> token in urlTokens || (token.length >= 4 && normalizedUrl.contains(token)) }
     }
 
     /** Verifies search results whose domain is different from the shop name. */
@@ -51,21 +75,4 @@ object CatalogSanitizer {
         "carne", "carni", "frutta", "verdura", "macelleria", "frutteria",
     )
     private val aggregatorHosts = setOf("cercavolantini", "doveconviene", "shopfully", "volantinofacile")
-    private val chainAliases = mapOf(
-        "esselunga" to setOf("esselunga"),
-        "todis" to setOf("todis"),
-        "eurospin" to setOf("eurospin"),
-        "conad" to setOf("conad"),
-        "coop" to setOf("coop"),
-        "carrefour" to setOf("carrefour"),
-        "lidl" to setOf("lidl"),
-        "penny" to setOf("penny"),
-        "aldi" to setOf("aldi"),
-        "deco" to setOf("deco"),
-        "tigota" to setOf("tigota"),
-        "natura-si" to setOf("naturasi", "natura-si", "natura si"),
-        "si-con-te" to setOf("si-con-te", "siconte", "si con te"),
-        "eataly" to setOf("eataly"),
-        "divina-carni" to setOf("divinacarni", "divina carni"),
-    )
 }

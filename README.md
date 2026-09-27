@@ -83,6 +83,13 @@ La raccolta usata dall'app avviene direttamente sul dispositivo:
 - trova supermercati, discount, mercati e piccoli negozi da OpenStreetMap/Overpass nel raggio scelto;
 - verifica `robots.txt`, identifica l'app e limita numero e dimensione dei documenti;
 - importa dati prodotto JSON-LD e PDF testuali pubblicamente accessibili;
+- legge i prezzi condivisi su [Open Prices](https://prices.openfoodfacts.org) (Open Food Facts, licenza ODbL) per il singolo negozio OpenStreetMap: è la fonte che copre botteghe, mercati e aziende agricole senza sito;
+- riconosce le catene senza elenchi scritti a mano: tag OpenStreetMap `brand`/`brand:wikidata` (o lo stesso nome usato da più negozi) → Wikidata per sito ufficiale e logo, ricerca web come ripiego, pagine volantino scoperte e verificate automaticamente; i tag bio/equo/sfuso di una filiale valgono per tutta l'insegna;
+- (facoltativo) usa l'API ufficiale Google Places per trovare negozi e siti che mancano su OpenStreetMap: aggiungi `GOOGLE_PLACES_API_KEY=...` in `local.properties` (mai nel repository). Le pagine di Google Maps non vengono lette direttamente, perché lo vietano i termini di Google;
+- loghi dall'archivio aperto Open Food Facts brand-images, poi Wikidata e sito ufficiale;
+- legge i cataloghi pubblici WooCommerce (`/wp-json/wc/store/v1/products`) e Shopify (`/products.json`) usati da molti piccoli negozi;
+- rispetta `robots.txt` per gruppo di user-agent (le regole per altri bot non bloccano più ShopEasily) e passa automaticamente da `http` a `https`;
+- esegue la raccolta in background con WorkManager (ogni ~6 ore e quando cambi zona, solo con rete e batteria non scarica), in modo incrementale e senza bloccare l'interfaccia;
 - conserva automaticamente fino a 10.000 offerte per funzionare anche offline;
 - aggiorna i prezzi medi di benzina, diesel e GPL dai dati aperti MIMIT.
 
@@ -102,7 +109,7 @@ Le app dei retailer e le recensioni di Google Maps/Tripadvisor vanno acquisite s
 - filtro per distanza, carta fedeltà ed età minima;
 - profilo con carte fedeltà possedute: un'offerta riservata viene mostrata solo per la catena registrata;
 - mappa operativa con posizione, nomi reali OpenStreetMap, distanza, selezione rapida e indicazioni stradali;
-- foglia verde solo per punti vendita con tag pubblici bio, filiera locale o fair-trade;
+- foglia del negozio da 0 a 100 calcolata da tag OpenStreetMap (`organic`, `fair_trade`, `bulk_purchase`, `zero_waste`, `shop=farm`, mercati…) e insegne bio/equosolidali; la foglia verde compare da 40 punti e contribuisce al punteggio dei prodotti;
 - lista della spesa persistente;
 - confronto del carrello, compresi prezzi non promozionali;
 - confronto tra punti vendita fisici e servizi online;

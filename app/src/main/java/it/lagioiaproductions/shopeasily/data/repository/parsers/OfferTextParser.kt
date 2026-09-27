@@ -13,6 +13,8 @@ object OfferTextParser {
         val previous = clean(lines.getOrNull(index - 1).orEmpty())
         val name = sequenceOf(inline, previous).firstOrNull(::looksLikeProductName)
             ?: return@mapIndexedNotNull null
+        // Flyers/OCR mix titles, slogans and prices: keep only credible grocery lines.
+        if (!ProductVocabulary.isCredibleProduct(name, line)) return@mapIndexedNotNull null
         ParsedOfferText(name, price)
     }.distinctBy { it.productName.lowercase(Locale.ROOT) to it.price }
 
@@ -47,6 +49,16 @@ object OfferTextParser {
         "consegna", "ordine", "ordini", "importo", "gratuita", "gratuito", "fascia oraria",
         "giorno successivo", "spesa minima", "pagamento", "servizio", "condizioni", "fino ad un",
         "entro le ore", "per gli ordini", "dal lunedì", "dal lunedi",
+        // Website boilerplate that sits next to numbers (VAT ids, thresholds, dates):
+        // "Privacy policy", "Spedizione gratuita sopra 50,00 €"…
+        "privacy", "cookie", "policy", "termini d", "termini e", "informativa", "copyright", "p.iva", "p. iva",
+        "partita iva", "diritti riservati", "all rights", "newsletter", "iscriviti", "registrati", "accedi",
+        "login", "il mio account", "carrello", "checkout", "spedizion", "resi e", "rimborso", "contattaci",
+        "contatti", "chi siamo", "lavora con noi", "punti vendita", "trova il negozio", "scarica l", "app store",
+        "google play", "seguici", "facebook", "instagram", "sfoglia", "scopri di", "leggi tutto", "clicca",
+        "regolamento", "concorso", "gift card", "carta regalo", "codice sconto", "coupon", "raccolta punti",
+        "catalogo premi", "orari di apertura", "faq", "assistenza clienti", "servizio clienti", "mappa del sito",
+        "sitemap", "powered by", "metodi di pagamento", "sede legale", "capitale sociale", "rea ",
     )
     private val IVA_WORD = Regex("""\biva\b""", RegexOption.IGNORE_CASE)
 }

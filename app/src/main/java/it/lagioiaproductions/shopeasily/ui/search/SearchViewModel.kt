@@ -3,34 +3,49 @@ package it.lagioiaproductions.shopeasily.ui.search
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import it.lagioiaproductions.shopeasily.data.local.SourceState
+import it.lagioiaproductions.shopeasily.data.model.CatalogPrice
 import it.lagioiaproductions.shopeasily.data.model.Offer
-import it.lagioiaproductions.shopeasily.data.repository.FakeOffersRepository
+import it.lagioiaproductions.shopeasily.data.preferences.CartEntry
+import it.lagioiaproductions.shopeasily.data.preferences.UserPreferences
 import it.lagioiaproductions.shopeasily.data.preferences.UserPreferencesRepository
+import it.lagioiaproductions.shopeasily.data.repository.NearbyStore
 import it.lagioiaproductions.shopeasily.data.repository.OnDeviceCatalogRepository
 import it.lagioiaproductions.shopeasily.data.repository.PriceWatchRepository
+import it.lagioiaproductions.shopeasily.data.repository.StoreDeduplicator
 import it.lagioiaproductions.shopeasily.domain.BasketGoal
 import it.lagioiaproductions.shopeasily.domain.BasketOptimizer
+import it.lagioiaproductions.shopeasily.domain.OfferRanking
+import it.lagioiaproductions.shopeasily.domain.ProductMatcher
+import it.lagioiaproductions.shopeasily.domain.SearchFilters
+import it.lagioiaproductions.shopeasily.domain.SortMode
 import it.lagioiaproductions.shopeasily.domain.TransportProfile
-import it.lagioiaproductions.shopeasily.data.local.SourceState
+import it.lagioiaproductions.shopeasily.sync.CatalogSyncWorker
+import it.lagioiaproductions.shopeasily.sync.SyncProgress
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import it.lagioiaproductions.shopeasily.domain.OfferRanking
-import it.lagioiaproductions.shopeasily.domain.SearchFilters
-import it.lagioiaproductions.shopeasily.domain.SortMode
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlin.math.asin
 import kotlin.math.cos
 import kotlin.math.pow
 import kotlin.math.sin
 import kotlin.math.sqrt
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 data class SearchUiState(
     val query: String = "",
@@ -61,203 +76,460 @@ data class SearchUiState(
     val manualCartEmissionKg: Double = 0.0,
     val showSelectedOnly: Boolean = false,
     val ambiguousImageUrls: Set<String> = emptySet(),
+    /** Background refresh in progress: shown as a thin, non-blocking indicator. */
+    val syncProgress: SyncProgress? = null,
+    val enriching: Boolean = false,
+    /** Incremented when the user changes sort/filters/query: the list scrolls back to the top. */
+    val orderVersion: Int = 0,
+    val message: String? = null,
 )
 
+/**
+ * Home screen state.
+ *
+ * All heavy work (ranking thousands of offers, basket optimisation, price
+ * history) runs on background dispatchers; the UI thread only receives the
+ * final state. Selection is applied optimistically and persisted as a
+ * snapshot, so a tap is visible immediately and survives catalogue refreshes.
+ */
+@OptIn(FlowPreview::class)
 class SearchViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = OnDeviceCatalogRepository(application)
     private val preferencesRepository = UserPreferencesRepository(application)
     private val priceWatch = PriceWatchRepository(application)
     private val _uiState = MutableStateFlow(SearchUiState())
     val uiState: StateFlow<SearchUiState> = _uiState.asStateFlow()
+
     private var searchJob: Job? = null
-    private var locationRefreshJob: Job? = null
+    private var summaryJob: Job? = null
+    private var enrichJob: Job? = null
     private var lastRefreshLocation: Pair<Double, Double>? = null
     private var lastRefreshAt: Long = 0L
-    private var lastDisplayableResults: List<Offer> = emptyList()
+    private var lastCatalogVersion: Long? = null
+    @Volatile private var lastUnfiltered: List<Offer> = emptyList()
+
+    /** Cached, ranked catalogue: re-read only when the database changes or filters change. */
+    private var rankedCache: List<Offer> = emptyList()
+    private var rankedKey: Any? = null
+    private var catalogPricesCache: List<CatalogPrice>? = null
+    private var storesCache: List<NearbyStore> = emptyList()
+
+    private val cacheMutex = Mutex()
 
     init {
-        search("")
+        viewModelScope.launch {
+            val preferences = runCatching { preferencesRepository.preferences.first() }.getOrDefault(UserPreferences())
+            _uiState.update { it.copy(filters = it.filters.copy(includeLoyaltyOffers = preferences.includeLoyaltyOffers)) }
+            search()
+        }
+        // Silent refresh: when the background worker writes new prices, recompute
+        // the list without spinners and without touching the query or scroll.
+        viewModelScope.launch {
+            repository.observeCatalogVersion()
+                .distinctUntilChanged()
+                .drop(1)
+                // Empty list: show the first prices almost at once; afterwards batch updates.
+                .debounce { if (_uiState.value.offers.isEmpty()) 500L else 3_000L }
+                .catch { }
+                .collect {
+                    if (searchJob?.isActive == true) {
+                        pendingSilentRefresh = true
+                    } else {
+                        invalidateCatalog()
+                        search(silent = true, fromBackground = true)
+                    }
+                }
+        }
+        // Selection comes only from the saved cart: background searches that started before
+        // a tap can no longer overwrite it with an older snapshot (taps "lost").
+        viewModelScope.launch {
+            preferencesRepository.manualCartOfferIds.catch { }.collect { ids ->
+                _uiState.update { it.copy(selectedOfferIds = ids) }
+                refreshCartSummary()
+            }
+        }
+        viewModelScope.launch {
+            CatalogSyncWorker.observeProgress(application)
+                .catch { }
+                .collect { progress -> _uiState.update { it.copy(syncProgress = progress) } }
+        }
     }
 
     fun updateQuery(value: String) {
-        _uiState.value = _uiState.value.copy(query = value)
+        _uiState.update { it.copy(query = value) }
     }
 
     fun submitSearch() {
-        search(_uiState.value.query, enrichPrices = true)
+        val query = _uiState.value.query.trim()
+        userChangePending = true
+        search()
+        enrichJob?.cancel()
+        if (query.length < 2) return
+        // Look up ordinary shelf prices in the background; results appear when ready.
+        enrichJob = viewModelScope.launch {
+            _uiState.update { it.copy(enriching = true) }
+            val imported = runCatching { repository.enrichRegularPrices(query) }.getOrDefault(0)
+            _uiState.update { it.copy(enriching = false) }
+            if (imported > 0) {
+                invalidateCatalog()
+                search(silent = true)
+            }
+        }
     }
 
     fun toggleCurrentPriceTarget() {
         val query = _uiState.value.query.trim()
         val price = _uiState.value.offers.minOfOrNull(Offer::price) ?: return
-        priceWatch.toggleTarget(query, price)
-        _uiState.value = _uiState.value.copy(watchedQuery = priceWatch.isWatched(query))
+        viewModelScope.launch(Dispatchers.IO) {
+            priceWatch.toggleTarget(query, price)
+            val watched = priceWatch.isWatched(query)
+            _uiState.update { it.copy(watchedQuery = watched) }
+        }
     }
 
     fun toggleOfferSelection(offer: Offer) {
+        // Immediate feedback on the UI thread; persistence and totals follow.
+        _uiState.update { state ->
+            val ids = state.selectedOfferIds
+            state.copy(selectedOfferIds = if (offer.id in ids) ids - offer.id else ids + offer.id)
+        }
         viewModelScope.launch {
-            preferencesRepository.toggleManualCartOffer(offer.id)
-            search(_uiState.value.query)
+            runCatching {
+                preferencesRepository.toggleManualCartOffer(
+                    CartEntry(offer.id, offer.productName, offer.storeName, offer.price, offer.promotional),
+                )
+            }.onFailure { error ->
+                _uiState.update { it.copy(message = "Selezione non salvata: ${error.localizedMessage ?: "errore"}") }
+            }
+            refreshCartSummary()
+            if (_uiState.value.showSelectedOnly) search(silent = true)
         }
     }
 
     fun toggleSelectedOnly() {
-        _uiState.value = _uiState.value.copy(showSelectedOnly = !_uiState.value.showSelectedOnly)
-        search(_uiState.value.query)
+        userChangePending = true
+        _uiState.update { it.copy(showSelectedOnly = !it.showSelectedOnly) }
+        search(silent = true)
     }
 
     fun clearManualCart() {
         viewModelScope.launch {
             preferencesRepository.clearManualCart()
-            _uiState.value = _uiState.value.copy(showSelectedOnly = false)
-            search(_uiState.value.query)
+            _uiState.update { it.copy(showSelectedOnly = false, selectedOfferIds = emptySet()) }
+            refreshCartSummary()
+            search(silent = true)
         }
     }
 
-    fun selectSortMode(sortMode: SortMode) {
-        updateFilters(_uiState.value.filters.copy(sortMode = sortMode))
-    }
+    fun consumeMessage() = _uiState.update { it.copy(message = null) }
 
-    fun setSustainableOnly(enabled: Boolean) {
-        updateFilters(_uiState.value.filters.copy(sustainableOnly = enabled))
-    }
+    fun selectSortMode(sortMode: SortMode) = updateFilters(_uiState.value.filters.copy(sortMode = sortMode))
 
-    fun setIncludeLoyaltyOffers(enabled: Boolean) {
+    private var userChangePending = false
+
+    fun setSustainableOnly(enabled: Boolean) = updateFilters(_uiState.value.filters.copy(sustainableOnly = enabled))
+
+    fun setIncludeLoyaltyOffers(enabled: Boolean) =
         updateFilters(_uiState.value.filters.copy(includeLoyaltyOffers = enabled))
-    }
 
     fun selectStore(storeName: String?) {
-        val immediate = lastDisplayableResults.filter { offer ->
-            storeName == null || offer.storeName.equals(storeName, ignoreCase = true)
+        // Filter/restore instantly from the unfiltered list, then refresh in background.
+        val base = lastUnfiltered
+        userChangePending = true
+        _uiState.update { state ->
+            state.copy(
+                selectedStore = storeName,
+                offers = if (storeName == null) base else base.filter {
+                    StoreDeduplicator.belongsToBrand(it.storeName, storeName)
+                },
+            )
         }
-        _uiState.value = _uiState.value.copy(selectedStore = storeName, offers = immediate)
-        search(_uiState.value.query)
+        search(silent = true)
     }
 
+    /** Clears the active store / "selected only" filter; returns true if something was cleared (Back). */
+    fun clearFilters(): Boolean {
+        val state = _uiState.value
+        if (state.selectedStore == null && !state.showSelectedOnly) return false
+        _uiState.update { it.copy(selectedStore = null, showSelectedOnly = false, offers = lastUnfiltered) }
+        search(silent = true)
+        return true
+    }
+
+    /** Stores the position and asks the background worker to refresh; never blocks the UI. */
     fun refreshForLocation(latitude: Double, longitude: Double) {
         val now = System.currentTimeMillis()
         val previous = lastRefreshLocation
         val movedMeters = previous?.let { distanceMeters(it.first, it.second, latitude, longitude) }
         if (previous != null && movedMeters != null && movedMeters < 500 && now - lastRefreshAt < 15 * 60_000L) return
-        if (locationRefreshJob?.isActive == true) return
         lastRefreshLocation = latitude to longitude
         lastRefreshAt = now
-        locationRefreshJob = viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoading = _uiState.value.offers.isEmpty())
-            val radius = preferencesRepository.preferences.first().radiusKm
-            runCatching {
-                repository.synchronize(latitude, longitude, radius) { _, _ -> }
-            }
-            search(_uiState.value.query)
+        viewModelScope.launch {
+            runCatching { preferencesRepository.setLastLocation(latitude, longitude) }
+            CatalogSyncWorker.requestNow(getApplication(), latitude, longitude)
         }
     }
 
     private fun updateFilters(filters: SearchFilters) {
-        _uiState.value = _uiState.value.copy(filters = filters)
-        search(_uiState.value.query)
+        _uiState.update { it.copy(filters = filters) }
+        userChangePending = true
+        search(silent = true)
     }
 
-    private fun search(query: String, enrichPrices: Boolean = false) {
+    private suspend fun invalidateCatalog() = cacheMutex.withLock {
+        rankedKey = null
+        catalogPricesCache = null
+    }
+
+    private var pendingSilentRefresh = false
+
+    /**
+     * User-driven searches restart immediately. Background refreshes (new prices written
+     * by the sync worker) never cancel a search in progress: they are merged and run once
+     * after it, otherwise continuous database writes could keep the list from ever loading.
+     */
+    private fun search(silent: Boolean = false, fromBackground: Boolean = false) {
+        if (fromBackground && searchJob?.isActive == true) {
+            pendingSilentRefresh = true
+            return
+        }
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoading = enrichPrices || _uiState.value.offers.isEmpty())
-            if (enrichPrices && query.isNotBlank()) {
-                runCatching { repository.enrichRegularPrices(query) }
-            }
-            val preferences = preferencesRepository.preferences.first()
+            if (!silent && _uiState.value.offers.isEmpty()) _uiState.update { it.copy(isLoading = true) }
+            val query = _uiState.value.query.trim()
+            val preferences = runCatching { preferencesRepository.preferences.first() }.getOrDefault(UserPreferences())
             val filters = _uiState.value.filters.copy(
                 userAge = preferences.age,
                 maximumDistanceMeters = preferences.radiusKm * 1_000,
-                includeLoyaltyOffers = preferences.includeLoyaltyOffers,
                 loyaltyCards = preferences.loyaltyCards,
             )
-            val allOffers = repository.search("").first()
-            val allRanked = withContext(Dispatchers.Default) { OfferRanking.apply(allOffers, filters) }
-            val storedStores = repository.storedStores()
-            val results = if (query.isBlank()) allRanked else allRanked.filter { offer ->
-                offer.productName.contains(query, ignoreCase = true) || offer.storeName.contains(query, ignoreCase = true)
+            val selectedIds = runCatching { preferencesRepository.manualCartOfferIds.first() }.getOrDefault(emptySet())
+            val showSelectedOnly = _uiState.value.showSelectedOnly
+            val requestedStore = _uiState.value.selectedStore
+
+            val result = withContext(Dispatchers.Default) {
+                val allRanked = ranked(filters)
+                val results = if (query.isBlank()) allRanked else allRanked.filter { offer ->
+                    ProductMatcher.matches(offer.productName, query) || offer.storeName.contains(query, ignoreCase = true)
+                }
+                val displayable = results.filter { !showSelectedOnly || it.id in selectedIds }
+                lastUnfiltered = displayable
+                // Only brands that actually have products in the current results appear in the filter.
+                val stores = displayable.groupBy { StoreDeduplicator.brandKey(it.storeName) }
+                    .filterValues { it.isNotEmpty() }
+                    .values.map { offers -> StoreDeduplicator.brandDisplayName(offers.first().storeName) }
+                    .distinct()
+                    .sortedBy { it.lowercase(Locale.ROOT) }
+                val selectedStore = requestedStore?.let { selected ->
+                    stores.firstOrNull { StoreDeduplicator.belongsToBrand(it, selected) }
+                }
+                val visible = displayable.filter { offer ->
+                    selectedStore == null || StoreDeduplicator.belongsToBrand(offer.storeName, selectedStore)
+                }
+                val today = SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).format(Date())
+                SearchSnapshot(
+                    offers = visible,
+                    stores = stores,
+                    selectedStore = selectedStore,
+                    websites = stores.associateWith { name ->
+                        allRanked.firstOrNull { StoreDeduplicator.belongsToBrand(it.storeName, name) }?.storeWebsite
+                            ?: storesCache.firstOrNull { StoreDeduplicator.belongsToBrand(it.name, name) }?.website
+                    },
+                    nearby = allRanked.count { it.distanceMeters <= 2_000 },
+                    expiringToday = allRanked.count { it.validUntil == today },
+                    ambiguousImages = allRanked.asSequence().filter { !it.productImageUrl.isNullOrBlank() }
+                        .groupBy { it.productImageUrl!! }
+                        .filterValues { offers -> offers.map { it.productName.lowercase(Locale.ROOT) }.distinct().size > 1 }
+                        .keys,
+                )
             }
-            val selectedIds = preferencesRepository.manualCartOfferIds.first()
-            // The store menu represents the products the user can actually see,
-            // not every discovered point of sale or temporarily empty source.
-            val displayableResults = results.filter { offer ->
-                !_uiState.value.showSelectedOnly || offer.id in selectedIds
+            _uiState.update { state ->
+                state.copy(
+                    offers = result.offers,
+                    filters = filters,
+                    availableStores = result.stores,
+                    storeWebsites = result.websites,
+                    selectedStore = result.selectedStore,
+                    nearbyOffers = result.nearby,
+                    expiringToday = result.expiringToday,
+                    ambiguousImageUrls = result.ambiguousImages,
+                    isLoading = false,
+                    orderVersion = if (userChangePending) state.orderVersion + 1 else state.orderVersion,
+                )
             }
-            lastDisplayableResults = displayableResults
-            val stores = displayableResults.map(Offer::storeName)
-                .groupBy { it.trim().lowercase(Locale.ROOT) }
-                .values.map { names -> names.minBy { name -> name.count(Char::isUpperCase) } }
-                .sortedBy { it.lowercase(Locale.ROOT) }
-            val selectedStore = _uiState.value.selectedStore?.let { selected ->
-                stores.firstOrNull { it.equals(selected, ignoreCase = true) }
+            userChangePending = false
+            refreshCartSummary()
+            if (pendingSilentRefresh) {
+                pendingSilentRefresh = false
+                invalidateCatalog()
+                search(silent = true)
             }
-            val visibleOffers = displayableResults.filter { offer ->
-                selectedStore == null || offer.storeName.equals(selectedStore, ignoreCase = true)
-            }
-            val pendingItems = preferencesRepository.shoppingItems.first().filterNot { it.second }.map { it.first }
-            val totalCandidates = allRanked.filter {
-                selectedStore == null || it.storeName.equals(selectedStore, ignoreCase = true)
-            }
-            val matchedPrices = pendingItems.mapNotNull { requested ->
-                totalCandidates.filter { offer ->
-                    offer.productName.contains(requested, ignoreCase = true) ||
-                        requested.contains(offer.productName.substringBefore(' '), ignoreCase = true)
-                }.minOfOrNull(Offer::price)
-            }
-            val catalog = repository.catalogPrices()
+        }
+    }
+
+    /** Totals, basket plans and price history: computed separately so they never delay the list. */
+    private var pendingSummary = false
+
+    /**
+     * Never cancels a running computation (continuous sync writes used to cancel it before
+     * it could finish, so totals never appeared): a new request is merged and run after it.
+     */
+    private fun refreshCartSummary() {
+        if (summaryJob?.isActive == true) {
+            pendingSummary = true
+            return
+        }
+        summaryJob = viewModelScope.launch {
+            val preferences = runCatching { preferencesRepository.preferences.first() }.getOrDefault(UserPreferences())
+            val cart = runCatching { preferencesRepository.manualCart.first() }.getOrDefault(emptyList())
+            val pendingItems = runCatching {
+                preferencesRepository.shoppingItems.first().filterNot { it.second }.map { it.first }
+            }.getOrDefault(emptyList())
+            val query = _uiState.value.query.trim()
+            val selectedStore = _uiState.value.selectedStore
+            val filters = _uiState.value.filters
             val transport = TransportProfile(
                 vehicle = preferences.vehicleType,
                 fuel = preferences.fuelType,
                 consumptionPer100Km = preferences.consumptionPer100Km,
                 pricePerUnit = preferences.fuelPricePerUnit,
             )
-            val selectedOffers = allRanked.filter { it.id in selectedIds }
-            val productsTotal = selectedOffers.sumOf(Offer::price)
-            val travelKm = selectedOffers.groupBy(Offer::storeName).values.sumOf { storeOffers ->
-                (storeOffers.maxOfOrNull(Offer::distanceMeters) ?: 0) * 2.0 / 1_000.0
+            val summary = withContext(Dispatchers.Default) {
+                val allRanked = ranked(filters)
+                val offersById = allRanked.associateBy(Offer::id)
+                val cartOffers = cart.map { entry ->
+                    val live = offersById[entry.offerId]
+                    CartLine(
+                        price = live?.price ?: entry.price.takeUnless(Double::isNaN) ?: 0.0,
+                        storeName = live?.storeName ?: entry.storeName,
+                        distance = live?.distanceMeters ?: storeDistance(entry.storeName),
+                    )
+                }
+                val productsTotal = cartOffers.sumOf(CartLine::price)
+                val travelKm = cartOffers.groupBy(CartLine::storeName).values.sumOf { lines ->
+                    (lines.maxOfOrNull(CartLine::distance) ?: 0) * 2.0 / 1_000.0
+                }
+                val candidates = allRanked.filter {
+                    selectedStore == null || StoreDeduplicator.belongsToBrand(it.storeName, selectedStore)
+                }
+                val matchedPrices = pendingItems.mapNotNull { requested ->
+                    candidates.filter { ProductMatcher.matches(it.productName, requested) }.minOfOrNull(Offer::price)
+                }
+                val catalog = catalogPrices()
+                val oneStop = BasketOptimizer.optimize(pendingItems, catalog, maximumStores = 1, transport = transport, goal = BasketGoal.CHEAPEST).firstOrNull()
+                val best = BasketOptimizer.optimize(pendingItems, catalog, transport = transport, goal = BasketGoal.CHEAPEST).firstOrNull()
+                val eco = BasketOptimizer.optimize(pendingItems, catalog, transport = transport, goal = BasketGoal.ECOLOGICAL).firstOrNull()
+                CartSummary(
+                    items = cart.size,
+                    productsTotal = productsTotal,
+                    fuelCost = travelKm * transport.costPerKm(),
+                    emissionKg = travelKm * transport.emissionKgPerKm(),
+                    shoppingTotal = matchedPrices.sum(),
+                    matched = matchedPrices.size,
+                    pending = pendingItems.size,
+                    oneStop = oneStop?.takeIf { it.missingItems.isEmpty() }?.monetaryTotal,
+                    best = best?.takeIf { it.missingItems.isEmpty() }?.monetaryTotal,
+                    eco = eco?.takeIf { it.missingItems.isEmpty() }?.monetaryTotal,
+                )
             }
-            val fuelCost = travelKm * transport.costPerKm()
-            val oneStop = BasketOptimizer.optimize(pendingItems, catalog, maximumStores = 1, transport = transport, goal = BasketGoal.CHEAPEST).firstOrNull()
-            val bestBasket = BasketOptimizer.optimize(pendingItems, catalog, transport = transport, goal = BasketGoal.CHEAPEST).firstOrNull()
-            val sustainable = BasketOptimizer.optimize(pendingItems, catalog, transport = transport, goal = BasketGoal.ECOLOGICAL).firstOrNull()
-            val statuses = repository.observeSourceStatuses().first()
-            val drops = priceWatch.recordAndFindDrops(allRanked)
-            _uiState.value = _uiState.value.copy(
-                offers = visibleOffers,
-                filters = filters,
-                availableStores = stores,
-                storeWebsites = stores.associateWith { name ->
-                    allRanked.firstOrNull { it.storeName.equals(name, ignoreCase = true) }?.storeWebsite
-                        ?: storedStores.firstOrNull { it.name.equals(name, ignoreCase = true) }?.website
-                },
-                selectedStore = selectedStore,
-                shoppingTotal = matchedPrices.sum(),
-                matchedShoppingItems = matchedPrices.size,
-                pendingShoppingItems = pendingItems.size,
-                oneStopTotal = oneStop?.monetaryTotal,
-                bestBasketTotal = bestBasket?.monetaryTotal,
-                sustainableTotal = sustainable?.monetaryTotal,
-                nearbyOffers = allRanked.count { it.distanceMeters <= 2_000 },
-                expiringToday = allRanked.count { it.validUntil == SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).format(Date()) },
-                priceDrops = drops.drops.size,
-                historicalLows = drops.historicalLows,
-                reachedTargets = priceWatch.reachedTargets(allRanked),
-                unavailableSources = statuses.count { it.state != SourceState.UPDATED },
-                watchedQuery = query.isNotBlank() && priceWatch.isWatched(query),
-                selectedOfferIds = selectedIds,
-                manualCartItems = selectedOffers.size,
-                manualCartProductsTotal = productsTotal,
-                manualCartFuelCost = fuelCost,
-                manualCartTotal = productsTotal + fuelCost,
-                manualCartEmissionKg = travelKm * transport.emissionKgPerKm(),
-                ambiguousImageUrls = allRanked.filter { !it.productImageUrl.isNullOrBlank() }
-                    .groupBy { it.productImageUrl!! }
-                    .filterValues { offers -> offers.map { it.productName.lowercase(Locale.ROOT) }.distinct().size > 1 }
-                    .keys,
-                isLoading = false,
-            )
+            val history = withContext(Dispatchers.IO) {
+                val statuses = runCatching { repository.observeSourceStatuses().first() }.getOrDefault(emptyList())
+                val version = runCatching { repository.observeCatalogVersion().first() }.getOrNull()
+                val allRanked = rankedCache
+                val drops = if (version != lastCatalogVersion) {
+                    lastCatalogVersion = version
+                    runCatching { priceWatch.recordAndFindDrops(allRanked) }.getOrNull()
+                } else {
+                    null
+                }
+                HistorySummary(
+                    unavailable = statuses.count { it.state != SourceState.UPDATED },
+                    drops = drops?.drops?.size,
+                    lows = drops?.historicalLows,
+                    targets = runCatching { priceWatch.reachedTargets(allRanked) }.getOrDefault(0),
+                    watched = query.isNotBlank() && priceWatch.isWatched(query),
+                )
+            }
+            _uiState.update { state ->
+                state.copy(
+                    manualCartItems = summary.items,
+                    manualCartProductsTotal = summary.productsTotal,
+                    manualCartFuelCost = summary.fuelCost,
+                    manualCartTotal = summary.productsTotal + summary.fuelCost,
+                    manualCartEmissionKg = summary.emissionKg,
+                    shoppingTotal = summary.shoppingTotal,
+                    matchedShoppingItems = summary.matched,
+                    pendingShoppingItems = summary.pending,
+                    oneStopTotal = summary.oneStop,
+                    bestBasketTotal = summary.best,
+                    sustainableTotal = summary.eco,
+                    unavailableSources = history.unavailable,
+                    priceDrops = history.drops ?: state.priceDrops,
+                    historicalLows = history.lows ?: state.historicalLows,
+                    reachedTargets = history.targets,
+                    watchedQuery = history.watched,
+                )
+            }
+        }.also { job ->
+            job.invokeOnCompletion {
+                if (pendingSummary) {
+                    pendingSummary = false
+                    viewModelScope.launch { refreshCartSummary() }
+                }
+            }
         }
     }
+
+    private suspend fun ranked(filters: SearchFilters): List<Offer> = cacheMutex.withLock {
+        val key = filters
+        if (rankedKey == key) return@withLock rankedCache
+        val all = runCatching { repository.search("").first() }.getOrDefault(emptyList())
+        storesCache = runCatching { repository.storedStores() }.getOrDefault(emptyList())
+        rankedCache = OfferRanking.apply(all, filters)
+        rankedKey = key
+        rankedCache
+    }
+
+    private suspend fun catalogPrices(): List<CatalogPrice> = cacheMutex.withLock {
+        catalogPricesCache ?: runCatching { repository.catalogPrices() }.getOrDefault(emptyList())
+            .also { catalogPricesCache = it }
+    }
+
+    private fun storeDistance(storeName: String): Int =
+        storesCache.firstOrNull { it.name.equals(storeName, ignoreCase = true) }?.distanceMeters ?: 0
+
+    private data class SearchSnapshot(
+        val offers: List<Offer>,
+        val stores: List<String>,
+        val selectedStore: String?,
+        val websites: Map<String, String?>,
+        val nearby: Int,
+        val expiringToday: Int,
+        val ambiguousImages: Set<String>,
+    )
+
+    private data class CartLine(val price: Double, val storeName: String, val distance: Int)
+
+    private data class CartSummary(
+        val items: Int,
+        val productsTotal: Double,
+        val fuelCost: Double,
+        val emissionKg: Double,
+        val shoppingTotal: Double,
+        val matched: Int,
+        val pending: Int,
+        val oneStop: Double?,
+        val best: Double?,
+        val eco: Double?,
+    )
+
+    private data class HistorySummary(
+        val unavailable: Int,
+        val drops: Int?,
+        val lows: Int?,
+        val targets: Int,
+        val watched: Boolean,
+    )
 
     private fun distanceMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
         val earthRadius = 6_371_000.0

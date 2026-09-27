@@ -5,7 +5,8 @@ package it.lagioiaproductions.shopeasily.ui.search
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.pm.PackageManager
-import android.graphics.BitmapFactory
+import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
@@ -25,6 +26,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.material3.Card
@@ -35,6 +37,8 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconToggleButton
+import androidx.compose.material3.InputChip
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -87,6 +91,7 @@ import androidx.compose.material.icons.rounded.Route
 import androidx.compose.material.icons.rounded.ShoppingBasket
 import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.LocalGasStation
 import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.LocalOffer
@@ -104,10 +109,11 @@ import it.lagioiaproductions.shopeasily.data.model.ProductImageKey
 import it.lagioiaproductions.shopeasily.domain.SortMode
 import it.lagioiaproductions.shopeasily.domain.ProductImageMatcher
 import it.lagioiaproductions.shopeasily.domain.sustainabilityScore
+import it.lagioiaproductions.shopeasily.domain.StoreSustainabilityResult
+import it.lagioiaproductions.shopeasily.ui.common.BitmapLoader
 import it.lagioiaproductions.shopeasily.ui.common.StoreLogoResolver
 import java.text.NumberFormat
 import java.util.Locale
-import java.net.URL
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -132,6 +138,24 @@ fun SearchScreen(
     ) { permissions ->
         locationGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
             permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+    }
+
+    val listState = rememberLazyListState()
+    // A new sort/filter must show the new first results: LazyColumn otherwise keeps the
+    // previously first product anchored on screen and the order seems unchanged.
+    LaunchedEffect(state.orderVersion) {
+        if (state.orderVersion > 0) listState.scrollToItem(0)
+    }
+
+    // Back first removes an active filter instead of leaving the app.
+    BackHandler(enabled = state.selectedStore != null || state.showSelectedOnly) {
+        viewModel.clearFilters()
+    }
+
+    LaunchedEffect(state.message) {
+        val message = state.message ?: return@LaunchedEffect
+        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+        viewModel.consumeMessage()
     }
 
     LaunchedEffect(Unit) {
@@ -255,6 +279,16 @@ fun SearchScreen(
                 )
             }
 
+            state.selectedStore?.let { store ->
+                InputChip(
+                    selected = true,
+                    onClick = { viewModel.selectStore(null) },
+                    label = { Text(store, maxLines = 1) },
+                    avatar = { StoreFilterLogo(store, state.storeWebsites[store]) },
+                    trailingIcon = { Icon(Icons.Rounded.Close, contentDescription = "Rimuovi filtro $store", modifier = Modifier.size(18.dp)) },
+                )
+            }
+
             if (state.manualCartItems > 0) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -278,12 +312,30 @@ fun SearchScreen(
                 }
             }
 
+            if (state.syncProgress != null || state.enriching) {
+                // Background refresh: thin, non-blocking; results keep working meanwhile.
+                val progress = state.syncProgress
+                if (progress != null && progress.total > 0) {
+                    LinearProgressIndicator(
+                        progress = { progress.completed.toFloat() / progress.total },
+                        modifier = Modifier.fillMaxWidth().height(2.dp)
+                            .semantics { contentDescription = "Aggiornamento prezzi ${progress.completed} di ${progress.total}" },
+                    )
+                } else {
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth().height(2.dp)
+                            .semantics { contentDescription = "Aggiornamento prezzi in corso" },
+                    )
+                }
+            }
+
             Spacer(Modifier.height(8.dp))
 
             when {
                 state.isLoading && state.offers.isEmpty() -> CircularProgressIndicator()
                 state.offers.isEmpty() -> EmptyResults()
                 else -> LazyColumn(
+                    state = listState,
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     items(items = state.offers, key = Offer::id) { offer ->
@@ -418,8 +470,18 @@ private fun OfferCard(
                 Text(
                     text = offer.storeName,
                     style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(start = 6.dp),
+                    maxLines = 1,
+                    modifier = Modifier.padding(start = 6.dp).weight(1f, fill = false),
                 )
+                if (offer.storeSustainabilityScore >= StoreSustainabilityResult.LEAF_THRESHOLD) {
+                    Icon(
+                        Icons.Rounded.Eco,
+                        contentDescription = "Negozio sostenibile, foglia ${offer.storeSustainabilityScore} su 100: " +
+                            offer.storeSustainabilityReasons.joinToString(", "),
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(start = 4.dp).size(16.dp),
+                    )
+                }
                 if (selected) {
                     Spacer(Modifier.weight(1f))
                     Icon(Icons.Rounded.CheckCircle, contentDescription = "Nel carrello", tint = MaterialTheme.colorScheme.primary)
@@ -592,21 +654,10 @@ private fun StoreLogo(offer: Offer) {
 }
 
 @Composable
-private fun networkBitmap(url: String?) = produceState<android.graphics.Bitmap?>(initialValue = null, url) {
-    value = url?.let {
-        withContext(Dispatchers.IO) {
-            runCatching {
-                if (!it.startsWith("http://") && !it.startsWith("https://")) {
-                    return@runCatching BitmapFactory.decodeFile(it.removePrefix("file://"))
-                }
-                val connection = URL(it).openConnection().apply {
-                    connectTimeout = 5_000
-                    readTimeout = 8_000
-                    setRequestProperty("User-Agent", "ShopEasily/0.3")
-                }
-                connection.getInputStream().use(BitmapFactory::decodeStream)
-            }.getOrNull()
-        }
+private fun networkBitmap(url: String?): androidx.compose.runtime.State<android.graphics.Bitmap?> {
+    val targetPx = with(androidx.compose.ui.platform.LocalDensity.current) { 92.dp.roundToPx() }
+    return produceState(initialValue = url?.let { BitmapLoader.cached(it, targetPx) }, url, targetPx) {
+        if (url != null && value == null) value = BitmapLoader.load(url, targetPx)
     }
 }
 

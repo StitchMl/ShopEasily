@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 
 private val Context.shopEasilyDataStore by preferencesDataStore(name = "shopeasily_preferences")
@@ -39,6 +40,37 @@ data class UserPreferences(
     val vehicleModelLabel: String? = null,
 )
 
+data class CartEntry(
+    val offerId: Long,
+    val name: String,
+    val storeName: String,
+    val price: Double,
+    val promotional: Boolean,
+) {
+    val isResolved: Boolean get() = name.isNotBlank()
+
+    fun encode(): String = listOf(
+        offerId.toString(), name.clean(), storeName.clean(), price.toString(), promotional.toString(),
+    ).joinToString(SEPARATOR)
+
+    companion object {
+        private const val SEPARATOR = "\u001F"
+        private fun String.clean() = replace(SEPARATOR, " ")
+
+        fun decode(value: String): CartEntry? {
+            val parts = value.split(SEPARATOR)
+            if (parts.size != 5) return null
+            return CartEntry(
+                offerId = parts[0].toLongOrNull() ?: return null,
+                name = parts[1],
+                storeName = parts[2],
+                price = parts[3].toDoubleOrNull() ?: return null,
+                promotional = parts[4].toBoolean(),
+            )
+        }
+    }
+}
+
 class UserPreferencesRepository(private val context: Context) {
     private object Keys {
         val age = intPreferencesKey("age")
@@ -56,6 +88,9 @@ class UserPreferencesRepository(private val context: Context) {
         val fuelPrice = stringPreferencesKey("fuel_price_per_unit")
         val manualCartOfferIds = stringSetPreferencesKey("manual_cart_offer_ids")
         val vehicleModelLabel = stringPreferencesKey("vehicle_model_label")
+        val manualCartEntries = stringSetPreferencesKey("manual_cart_entries")
+        val lastLatitude = stringPreferencesKey("last_latitude")
+        val lastLongitude = stringPreferencesKey("last_longitude")
     }
 
     val preferences: Flow<UserPreferences> = context.shopEasilyDataStore.data.map { values ->
@@ -79,8 +114,8 @@ class UserPreferencesRepository(private val context: Context) {
 
     val shoppingItems: Flow<List<Pair<String, Boolean>>> = context.shopEasilyDataStore.data.map { values ->
         val checked = values[Keys.checkedShoppingItems].orEmpty()
-        values[Keys.shoppingItems].orEmpty().sorted().map { it to (it in checked) }
-    }
+        values[Keys.shoppingItems].orEmpty().sortedBy { it.lowercase() }.map { it to (it in checked) }
+    }.distinctUntilChanged()
 
     suspend fun setAge(age: Int?) = context.shopEasilyDataStore.edit { values ->
         if (age == null) values.remove(Keys.age) else values[Keys.age] = age
@@ -106,18 +141,73 @@ class UserPreferencesRepository(private val context: Context) {
         it[Keys.lastNotifiedOfferId] = id
     }
 
-    val manualCartOfferIds: Flow<Set<Long>> = context.shopEasilyDataStore.data.map { values ->
-        values[Keys.manualCartOfferIds].orEmpty().mapNotNull(String::toLongOrNull).toSet()
+    /**
+     * Products selected on Home. Each entry is a snapshot (name, store, price)
+     * so the selection survives catalogue refreshes, expired offers and price
+     * changes, and the shopping list can show it without scanning the catalogue.
+     */
+    val manualCart: Flow<List<CartEntry>> = context.shopEasilyDataStore.data.map { values ->
+        val snapshots = values[Keys.manualCartEntries].orEmpty().mapNotNull { CartEntry.decode(it) }
+        val known = snapshots.map(CartEntry::offerId).toSet()
+        // Legacy selections stored only the id: keep them until resolved.
+        val legacy = values[Keys.manualCartOfferIds].orEmpty().mapNotNull(String::toLongOrNull)
+            .filterNot(known::contains)
+            .map { CartEntry(it, "", "", Double.NaN, false) }
+        (snapshots + legacy).sortedBy { it.name.lowercase() }
+    }.distinctUntilChanged()
+
+    val manualCartOfferIds: Flow<Set<Long>> = manualCart.map { entries -> entries.map(CartEntry::offerId).toSet() }
+        .distinctUntilChanged()
+
+    /** Adds or removes an offer from the Home selection. Returns true when it is now selected. */
+    suspend fun toggleManualCartOffer(entry: CartEntry): Boolean {
+        var selected = false
+        context.shopEasilyDataStore.edit { values ->
+            val entries = values[Keys.manualCartEntries].orEmpty()
+            val ids = values[Keys.manualCartOfferIds].orEmpty()
+            val existing = entries.filter { CartEntry.decode(it)?.offerId == entry.offerId }.toSet()
+            val idText = entry.offerId.toString()
+            if (existing.isNotEmpty() || idText in ids) {
+                values[Keys.manualCartEntries] = entries - existing
+                values[Keys.manualCartOfferIds] = ids - idText
+            } else {
+                values[Keys.manualCartEntries] = entries + entry.encode()
+                selected = true
+            }
+        }
+        return selected
     }
 
-    suspend fun toggleManualCartOffer(id: Long) = context.shopEasilyDataStore.edit { values ->
-        val idText = id.toString()
-        val current = values[Keys.manualCartOfferIds].orEmpty()
-        values[Keys.manualCartOfferIds] = if (idText in current) current - idText else current + idText
+    suspend fun removeManualCartOffer(id: Long) = context.shopEasilyDataStore.edit { values ->
+        values[Keys.manualCartEntries] = values[Keys.manualCartEntries].orEmpty()
+            .filterNot { CartEntry.decode(it)?.offerId == id }.toSet()
+        values[Keys.manualCartOfferIds] = values[Keys.manualCartOfferIds].orEmpty() - id.toString()
+    }
+
+    /** Replaces legacy id-only selections with full snapshots once resolved from the catalogue. */
+    suspend fun upgradeLegacyCartEntries(resolved: List<CartEntry>) {
+        if (resolved.isEmpty()) return
+        context.shopEasilyDataStore.edit { values ->
+            values[Keys.manualCartEntries] = values[Keys.manualCartEntries].orEmpty() + resolved.map(CartEntry::encode)
+            values[Keys.manualCartOfferIds] = values[Keys.manualCartOfferIds].orEmpty() -
+                resolved.map { it.offerId.toString() }.toSet()
+        }
     }
 
     suspend fun clearManualCart() = context.shopEasilyDataStore.edit { values ->
         values.remove(Keys.manualCartOfferIds)
+        values.remove(Keys.manualCartEntries)
+    }
+
+    val lastLocation: Flow<Pair<Double, Double>?> = context.shopEasilyDataStore.data.map { values ->
+        val lat = values[Keys.lastLatitude]?.toDoubleOrNull()
+        val lon = values[Keys.lastLongitude]?.toDoubleOrNull()
+        if (lat != null && lon != null) lat to lon else null
+    }.distinctUntilChanged()
+
+    suspend fun setLastLocation(latitude: Double, longitude: Double) = context.shopEasilyDataStore.edit {
+        it[Keys.lastLatitude] = latitude.toString()
+        it[Keys.lastLongitude] = longitude.toString()
     }
 
     suspend fun setLoyaltyCard(shopName: String, owned: Boolean) = context.shopEasilyDataStore.edit { values ->
@@ -143,8 +233,19 @@ class UserPreferencesRepository(private val context: Context) {
         it[Keys.fuelPrice] = value.coerceIn(0.0, 10.0).toString()
     }
 
-    suspend fun addShoppingItem(name: String) = context.shopEasilyDataStore.edit { values ->
-        values[Keys.shoppingItems] = values[Keys.shoppingItems].orEmpty() + name
+    /** Adds an item, ignoring blanks and case-insensitive duplicates. Returns false if nothing was added. */
+    suspend fun addShoppingItem(name: String): Boolean {
+        val cleaned = name.replace(Regex("\\s+"), " ").trim()
+        if (cleaned.isEmpty()) return false
+        var added = false
+        context.shopEasilyDataStore.edit { values ->
+            val current = values[Keys.shoppingItems].orEmpty()
+            if (current.none { it.equals(cleaned, ignoreCase = true) }) {
+                values[Keys.shoppingItems] = current + cleaned
+                added = true
+            }
+        }
+        return added
     }
 
     suspend fun removeShoppingItem(name: String) = context.shopEasilyDataStore.edit { values ->

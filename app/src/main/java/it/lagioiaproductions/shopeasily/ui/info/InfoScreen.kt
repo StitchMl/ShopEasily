@@ -17,6 +17,8 @@ import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Route
 import androidx.compose.material.icons.rounded.ShoppingBasket
 import androidx.compose.material.icons.rounded.Star
+import androidx.compose.material.icons.rounded.Storefront
+import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -40,7 +42,10 @@ fun InfoScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Indietro") }
             Text("Come funziona", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         }
-        InfoCard(Icons.Rounded.Eco, "Punteggio foglia", "È un indice da 0 a 100, non una certificazione. Fino a 60 punti derivano da bio, filiera locale, equosolidale o benessere animale; fino a 30 dalla vicinanza; fino a 10 dalla qualità disponibile. 80–100 è ottimo, 60–79 buono, 40–59 discreto; sotto 40 indica pochi dati o impatto maggiore.")
+        InfoCard(Icons.Rounded.Eco, "Foglia del negozio", "Ogni punto vendita riceve un indice da 0 a 100 calcolato dai dati pubblici di OpenStreetMap e dall’insegna: solo biologico (50), bio in parte (15–30), commercio equo (10–45), vendita diretta del produttore (45), mercato rionale (25), prodotti locali o filiera corta (25), sfuso o rifiuti zero (20–40), contenitori riutilizzabili (10), bottega indipendente di vicinato (10). La foglia verde compare da 40 punti; toccandola TalkBack legge il motivo.")
+        InfoCard(Icons.Rounded.Eco, "Punteggio foglia del prodotto", "È un indice da 0 a 100, non una certificazione. Fino a 45 punti dalle etichette del prodotto (bio, equosolidale, benessere animale, filiera locale), fino a 35 dalla foglia del negozio, fino a 15 dalla vicinanza e fino a 5 dalla qualità dei dati. 80–100 è ottimo, 60–79 buono, 40–59 discreto; sotto 40 indica pochi dati o impatto maggiore.")
+        InfoCard(Icons.Rounded.Storefront, "Piccole realtà", "Oltre a volantini e cataloghi delle catene, ShopEasily legge i prezzi condivisi su Open Prices (Open Food Facts) per il singolo negozio OpenStreetMap e i cataloghi pubblici WooCommerce e Shopify usati da molte botteghe, aziende agricole e negozi sfusi. Più persone fotografano cartellini su Open Prices, più negozi di quartiere compaiono.")
+        InfoCard(Icons.Rounded.Sync, "Aggiornamenti in background", "La raccolta dei prezzi avviene in background con rete disponibile e batteria non scarica, circa ogni 6 ore e quando cambi zona. La Home si aggiorna da sola senza interromperti; la barra sottile in alto indica l’avanzamento.")
         InfoCard(Icons.Rounded.Info, "Filtro foglia", "Mantiene la fascia dei prodotti più sostenibili trovati. Se nessuno è perfetto, mostra comunque le alternative migliori. L’ordinamento scelto resta prioritario dentro questa fascia.")
         InfoCard(Icons.Rounded.Euro, "Ordinamenti", "Prezzo usa il prezzo unitario quando disponibile, altrimenti quello della confezione. Distanza usa il tragitto stradale quando reperibile. Qualità usa dati espliciti oppure una stima prudente della completezza della scheda. Consigliati combina prezzo 45%, distanza 20%, qualità 20% e sostenibilità 15%.")
         InfoCard(Icons.Rounded.ShoppingBasket, "Offerte e prezzi normali", "Il cartellino indica una promozione. Senza cartellino è un prezzo ordinario recuperato dal catalogo pubblico: viene comunque confrontato perché può essere più conveniente di un’offerta altrove.")

@@ -51,6 +51,10 @@ data class Offer(
     val storeWebsite: String? = null,
     val promotional: Boolean = true,
     val productImageVerified: Boolean = false,
+    /** Leaf score (0..100) of the point of sale, derived from public store tags. */
+    val storeSustainabilityScore: Int = 0,
+    /** Why the store received its leaf score (e.g. "Solo prodotti biologici"). */
+    val storeSustainabilityReasons: List<String> = emptyList(),
 )
 
 fun Offer.isEligibleFor(age: Int?): Boolean = minimumAge == null || (age != null && age >= minimumAge)
