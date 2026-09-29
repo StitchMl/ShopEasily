@@ -223,6 +223,37 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
 
     fun consumeMessage() = _uiState.update { it.copy(message = null) }
 
+    private val _reportStores = MutableStateFlow<List<NearbyStore>>(emptyList())
+    /** Shops and markets where the user can report a price seen on the shelf. */
+    val reportStores: StateFlow<List<NearbyStore>> = _reportStores.asStateFlow()
+
+    fun loadReportStores() {
+        viewModelScope.launch {
+            _reportStores.value = runCatching { repository.priceReportStores() }.getOrDefault(emptyList())
+        }
+    }
+
+    /**
+     * Saves a price seen in a shop or at a market (they rarely publish prices online):
+     * it appears in results, in the basket calculation and in the Quality sort.
+     */
+    fun addUserPrice(storeId: String, productName: String, priceText: String, quality: Int?) {
+        val price = priceText.trim().replace("€", "").replace(',', '.').trim().toDoubleOrNull()
+        if (price == null || price <= 0.0 || productName.isBlank()) {
+            _uiState.update { it.copy(message = "Indica prodotto e prezzo (es. 2,50)") }
+            return
+        }
+        viewModelScope.launch {
+            val saved = runCatching { repository.addUserPrice(storeId, productName, price, quality) }.getOrDefault(false)
+            if (saved) {
+                invalidateCatalog()
+                userChangePending = true
+                search(silent = true)
+            }
+            _uiState.update { it.copy(message = if (saved) "Prezzo salvato" else "Prezzo non salvato") }
+        }
+    }
+
     fun selectSortMode(sortMode: SortMode) = updateFilters(_uiState.value.filters.copy(sortMode = sortMode))
 
     private var userChangePending = false

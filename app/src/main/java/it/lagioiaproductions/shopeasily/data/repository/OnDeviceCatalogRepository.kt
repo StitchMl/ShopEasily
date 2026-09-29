@@ -110,7 +110,8 @@ class OnDeviceCatalogRepository(
     /** Emits whenever offers change (background sync, enrichment): drives silent UI refreshes. */
     fun observeCatalogVersion(): Flow<Long> = dao.observeCatalogVersion()
 
-    suspend fun storedStores(): List<NearbyStore> = dao.stores().also(::registerBrands).map { it.toNearbyStore() }
+    suspend fun storedStores(): List<NearbyStore> =
+        dao.stores().filterNot { NonShopSites.isPlatformName(it.name) }.also(::registerBrands).map { it.toNearbyStore() }
 
     private fun registerBrands(stores: List<StoreEntity>) {
         BrandDirectory.rememberWikidata(stores.mapNotNull { store -> store.brandWikidata?.let { store.name to it } }.toMap())
@@ -129,6 +130,61 @@ class OnDeviceCatalogRepository(
         StoreDeduplicator.registerSiteGroups(hosts)
     }
 
+    /**
+     * Places where the user can report a price seen on the shelf: markets and small
+     * shops first (they rarely publish prices online), then the others, by distance.
+     */
+    suspend fun priceReportStores(): List<NearbyStore> = withContext(Dispatchers.IO) {
+        storedStores().sortedWith(
+            compareBy<NearbyStore> { store ->
+                when {
+                    store.category == "marketplace" || store.category == "farm" -> 0
+                    StoreDeduplicator.brandOf(store.name) == null -> 1
+                    else -> 2
+                }
+            }.thenBy(NearbyStore::distanceMeters),
+        ).take(MAX_REPORT_STORES)
+    }
+
+    /**
+     * Saves a price the user saw in a shop or at a market stall (e.g. Campagna Amica,
+     * a municipal market): these places publish no prices online, so the user's own
+     * observation is the reliable source. [quality] 1..5 feeds the Quality sort.
+     */
+    suspend fun addUserPrice(storeId: String, productName: String, price: Double, quality: Int?): Boolean =
+        withContext(Dispatchers.IO) {
+            val store = dao.store(storeId) ?: return@withContext false
+            val name = productName.trim().replace(Regex("\\s+"), " ")
+            if (name.length < 2 || price <= 0.0 || price > 1_000.0) return@withContext false
+            val now = System.currentTimeMillis()
+            val fingerprint = "${store.id}|${name.lowercase(Locale.ROOT)}|user"
+            dao.upsertOffers(
+                listOf(
+                    OfferEntity(
+                        id = fingerprint.hashCode().toLong().and(0xffffffffL),
+                        fingerprint = fingerprint,
+                        storeId = store.id,
+                        storeName = store.name,
+                        productName = name,
+                        price = price,
+                        distanceMeters = store.distanceMeters,
+                        productImageUrl = null,
+                        storeWebsite = store.website,
+                        sourceUrl = "user://report/${store.id}",
+                        parserId = USER_PARSER_ID,
+                        confidence = 1.0,
+                        observedAt = now,
+                        expiresAt = now + USER_PRICE_TTL_MS,
+                        promotional = false,
+                        productImageVerified = false,
+                        labels = null,
+                        userQuality = quality?.coerceIn(1, 5),
+                    ),
+                ),
+            )
+            true
+        }
+
     private fun knownBrands(stores: Collection<StoreEntity>): Set<String> =
         stores.mapNotNull { it.brand?.let(StoreDeduplicator::canonicalName) }.filter { it.length >= 3 }.toSet()
 
@@ -139,7 +195,7 @@ class OnDeviceCatalogRepository(
     }
 
     suspend fun catalogPrices(): List<CatalogPrice> = withContext(Dispatchers.IO) {
-        val stores = dao.stores().associateBy(StoreEntity::id)
+        val stores = dao.stores().filterNot { NonShopSites.isPlatformName(it.name) }.associateBy(StoreEntity::id)
         dao.activeOffers(System.currentTimeMillis()).mapNotNull { entity ->
             val store = stores[entity.storeId] ?: return@mapNotNull null
             val offer = entity.toOffer(store)
@@ -167,12 +223,14 @@ class OnDeviceCatalogRepository(
 
     override fun search(query: String): Flow<List<Offer>> = flow {
         migrateLegacyCacheIfNeeded()
-        val storeList = dao.stores().also(::registerBrands)
+        val storeList = dao.stores().filterNot { NonShopSites.isPlatformName(it.name) }.also(::registerBrands)
         val stores = storeList.associateBy(StoreEntity::id)
+        // Offers of a store that is no longer valid (e.g. "Meta", a social page) are hidden.
         val cached = dao.activeOffers(System.currentTimeMillis())
+            .filter { it.storeId in stores && !NonShopSites.isPlatformName(it.storeName) }
         // Implausible rows are only hidden, never deleted: a rule change must not destroy data.
         val invalidIdSet = cached.filterNot {
-            CatalogSanitizer.isPlausible(it.productName, it.price, it.storeName, it.sourceUrl, it.productImageUrl)
+            it.parserId == USER_PARSER_ID || CatalogSanitizer.isPlausible(it.productName, it.price, it.storeName, it.sourceUrl, it.productImageUrl)
         }.mapTo(HashSet(), OfferEntity::id)
         val local = cached.asSequence().filter { it.id !in invalidIdSet }.map { it.toOffer(stores[it.storeId]) }
             .filter { offer ->
@@ -262,7 +320,7 @@ class OnDeviceCatalogRepository(
         val now = System.currentTimeMillis()
         // The list of shops changes slowly: reuse it for 7 days unless the user moved > 1 km
         // or changed radius (the OpenStreetMap query alone takes 5-20 s in a big city).
-        val area = appContext.getSharedPreferences("store_list_area", Context.MODE_PRIVATE)
+        val area = appContext.getSharedPreferences("store_list_area_v2", Context.MODE_PRIVATE)
         val lastLat = area.getFloat("lat", Float.NaN).toDouble()
         val lastLon = area.getFloat("lon", Float.NaN).toDouble()
         val sameArea = !lastLat.isNaN() && area.getInt("radius", -1) == radiusKm &&
@@ -294,7 +352,8 @@ class OnDeviceCatalogRepository(
             })
         }
         dao.deleteExpired(now)
-        val storeEntities = dao.stores().also(::registerBrands)
+        dao.deleteLegacyOpenPricesOffers()
+        val storeEntities = dao.stores().filterNot { NonShopSites.isPlatformName(it.name) }.also(::registerBrands)
         val brandSet = knownBrands(storeEntities)
 
         val statuses = dao.sourceStatuses().associateBy(SourceStatusEntity::storeId)
@@ -401,11 +460,19 @@ class OnDeviceCatalogRepository(
 
             // 1. Open Prices: crowdsourced price tags linked to this exact OSM shop.
             if (shop.osmType != null && shop.osmId != null) {
-                val url = OpenPricesSource.url(shop.osmType, shop.osmId, now)
-                http.getText(url, HttpFetcher.MAX_JSON_BYTES, accept = "application/json")
-                    ?.let { OpenPricesSource.parse(it, url) }
-                    ?.mapTo(offers) { it.toOffer(shop) }
-                trace += "Open Prices ${offers.size}"
+                val locationUrl = OpenPricesSource.locationUrl(shop.osmType, shop.osmId)
+                val locationId = http.getText(locationUrl, HttpFetcher.MAX_JSON_BYTES, accept = "application/json")
+                    ?.let(OpenPricesSource::locationId)
+                if (locationId != null) {
+                    val pricesUrl = OpenPricesSource.pricesUrl(locationId, now)
+                    val before = offers.size
+                    http.getText(pricesUrl, HttpFetcher.MAX_JSON_BYTES, accept = "application/json")
+                        ?.let { OpenPricesSource.parse(it, pricesUrl) }
+                        ?.mapTo(offers) { it.toOffer(shop) }
+                    trace += "Open Prices ${offers.size - before}"
+                } else {
+                    trace += "Open Prices 0"
+                }
             }
 
             // 2. Farmers' markets: their online shop in the Campagna Amica network (real prices).
@@ -536,7 +603,7 @@ class OnDeviceCatalogRepository(
      */
     private fun mergeGooglePlaces(osm: List<NearbyStore>, latitude: Double, longitude: Double, radius: Int): List<NearbyStore> {
         if (!googlePlaces.isEnabled) return osm
-        val preferences = appContext.getSharedPreferences("google_places", Context.MODE_PRIVATE)
+        val preferences = appContext.getSharedPreferences("google_places_v2", Context.MODE_PRIVATE)
         val area = "${(latitude * 100).roundToInt()}|${(longitude * 100).roundToInt()}|$radius"
         val cachedAt = preferences.getLong(area, 0L)
         val places = if (System.currentTimeMillis() - cachedAt < GOOGLE_REFRESH_MS) {
@@ -547,7 +614,7 @@ class OnDeviceCatalogRepository(
         }
         if (places.isEmpty()) return osm
         val result = osm.toMutableList()
-        places.forEach { place ->
+        places.filterNot { NonShopSites.isPlatformName(it.name) }.forEach { place ->
             val placeTokens = StoreDeduplicator.meaningfulTokens(place.name).toSet()
             val index = result.indexOfFirst { store ->
                 distanceMeters(store.latitude, store.longitude, place.latitude, place.longitude) <= 120 &&
@@ -603,7 +670,7 @@ class OnDeviceCatalogRepository(
             val tagsJson = item.optJSONObject("tags") ?: return@mapNotNull null
             val tags = tagsJson.keys().asSequence().associateWith { tagsJson.optString(it) }
             val name = tags["name"].orEmpty()
-            if (name.isBlank()) return@mapNotNull null
+            if (name.isBlank() || NonShopSites.isPlatformName(name)) return@mapNotNull null
             val brandName = tags["brand"]?.takeIf(String::isNotBlank) ?: name
             Raw(item, tags, name, StoreDeduplicator.canonicalName(brandName))
         }
@@ -1043,7 +1110,8 @@ class OnDeviceCatalogRepository(
         // No retailer publishes reviews: leave it empty so the Quality sort uses the
         // per-product estimate (verified photo, brand, labels…) instead of one value
         // shared by every product of the same source, which made the sort look inert.
-        qualityScore = null,
+        // Only a price the user reported carries the quality they gave it.
+        qualityScore = userQuality?.toFloat(),
         sustainabilityLabels = (labels?.split('|').orEmpty().filter(String::isNotBlank) +
             inferredSustainabilityLabels(productName)).distinct(),
         validUntil = null,
@@ -1136,6 +1204,10 @@ class OnDeviceCatalogRepository(
         val SITEMAP_LOC = Regex("""<loc>\s*([^<\s]+)\s*</loc>""", RegexOption.IGNORE_CASE)
         val PRODUCT_URL_HINTS = listOf("product", "prodott", "/shop/", "/negozio/", "/p/", "articol", "catalog")
         const val MAX_SYNC_STORES = 90
+        const val MAX_REPORT_STORES = 80
+        const val USER_PARSER_ID = "user"
+        /** A price seen on the shelf stays useful for about two months. */
+        const val USER_PRICE_TTL_MS = 60L * 24 * 60 * 60 * 1_000
         const val MAX_OVERPASS_BYTES = 16 * 1024 * 1024
         const val GOOGLE_REFRESH_MS = 3L * 24 * 60 * 60 * 1_000
         const val MAX_OFFERS_PER_STORE = 400

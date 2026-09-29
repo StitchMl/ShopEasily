@@ -6,6 +6,15 @@ import org.junit.Test
 
 class StructuredSourcesTest {
     @Test
+    fun openPricesResolvesExactOsmLocationBeforePrices() {
+        assertEquals(5077L, OpenPricesSource.locationId("""{"id":5077,"osm_id":13404303728}"""))
+        assertTrue(OpenPricesSource.locationUrl("node", 13404303728).endsWith("/NODE/13404303728"))
+        val url = OpenPricesSource.pricesUrl(5077, 1_800_000_000_000)
+        assertTrue(url.contains("location_id=5077"))
+        assertTrue(!url.contains("location_osm_id"))
+    }
+
+    @Test
     fun openPricesProductAndCategoryPrices() {
         val json = """
             {"items":[

@@ -116,7 +116,7 @@ class HttpFetcher(private val userAgent: String) {
                 }
             }
             if (connection.responseCode !in 200..299) return null
-            val declared = connection.contentLengthLong
+            val declared = connection.getHeaderField("Content-Length")?.toLongOrNull() ?: -1L
             if (declared > maxBytes) return null
             connection.inputStream.use { it.readLimited(maxBytes) }
         } catch (_: Exception) {

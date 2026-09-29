@@ -79,7 +79,7 @@ object BasketOptimizer {
             requested.forEachIndexed { index, item ->
                 val matches = matchCache.getOrPut(candidate.productName to item) { candidate.matches(item) }
                 if (!matches) return@forEachIndexed
-                storesById.putIfAbsent(candidate.store.id, candidate.store)
+                if (candidate.store.id !in storesById) storesById[candidate.store.id] = candidate.store
                 val slots = bestByStore.getOrPut(candidate.store.id) { arrayOfNulls(requested.size) }
                 val current = slots[index]
                 slots[index] = if (current == null) candidate else better(current, candidate, goal)

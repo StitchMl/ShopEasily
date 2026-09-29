@@ -29,7 +29,13 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.TextButton
+import androidx.compose.material.icons.rounded.AddCircle
+import androidx.compose.material.icons.rounded.StarBorder
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -141,6 +147,18 @@ fun SearchScreen(
     }
 
     val listState = rememberLazyListState()
+    var showPriceDialog by remember { mutableStateOf(false) }
+    if (showPriceDialog) {
+        val reportStores by viewModel.reportStores.collectAsStateWithLifecycle()
+        UserPriceDialog(
+            stores = reportStores,
+            onDismiss = { showPriceDialog = false },
+            onSave = { storeId, product, price, quality ->
+                viewModel.addUserPrice(storeId, product, price, quality)
+                showPriceDialog = false
+            },
+        )
+    }
     // A new sort/filter must show the new first results: LazyColumn otherwise keeps the
     // previously first product anchored on screen and the order seems unchanged.
     LaunchedEffect(state.orderVersion) {
@@ -258,6 +276,15 @@ fun SearchScreen(
                     selected = state.selectedStore,
                     onSelected = viewModel::selectStore,
                 )
+                IconButton(
+                    onClick = {
+                        viewModel.loadReportStores()
+                        showPriceDialog = true
+                    },
+                    modifier = Modifier.size(44.dp),
+                ) {
+                    Icon(Icons.Rounded.AddCircle, contentDescription = "Aggiungi un prezzo visto in negozio o al mercato")
+                }
                 Spacer(Modifier.weight(1f))
                 Text(
                     text = NumberFormat.getCurrencyInstance(Locale.ITALY).format(state.shoppingTotal),
@@ -354,6 +381,91 @@ fun SearchScreen(
                 }
             }
     }
+}
+
+/**
+ * Markets (Campagna Amica, rionali) and many small shops publish no prices online:
+ * the user can record the price and quality seen on the stall or shelf.
+ */
+@Composable
+private fun UserPriceDialog(
+    stores: List<it.lagioiaproductions.shopeasily.data.repository.NearbyStore>,
+    onDismiss: () -> Unit,
+    onSave: (storeId: String, product: String, price: String, quality: Int?) -> Unit,
+) {
+    var storeId by remember { mutableStateOf<String?>(null) }
+    var product by remember { mutableStateOf("") }
+    var price by remember { mutableStateOf("") }
+    var quality by remember { mutableStateOf(0) }
+    var menuOpen by remember { mutableStateOf(false) }
+    val selected = stores.firstOrNull { it.id == storeId }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Prezzo visto in negozio") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Mercati e piccole botteghe spesso non pubblicano i prezzi online: salvali tu e " +
+                        "l'app li userà nei risultati e nel calcolo della spesa.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Box {
+                    OutlinedButton(onClick = { menuOpen = true }, modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            selected?.let { "${it.name} · ${distanceLabel(it.distanceMeters)}" }
+                                ?: if (stores.isEmpty()) "Nessun negozio trovato: attendi l'aggiornamento" else "Scegli negozio o mercato",
+                            maxLines = 1,
+                        )
+                    }
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        stores.forEach { store ->
+                            DropdownMenuItem(
+                                text = { Text("${store.name} · ${distanceLabel(store.distanceMeters)}", maxLines = 1) },
+                                onClick = {
+                                    storeId = store.id
+                                    menuOpen = false
+                                },
+                            )
+                        }
+                    }
+                }
+                OutlinedTextField(
+                    value = product,
+                    onValueChange = { product = it },
+                    label = { Text("Prodotto (es. Pomodori 1 kg)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = price,
+                    onValueChange = { value -> price = value.filter { it.isDigit() || it == ',' || it == '.' }.take(8) },
+                    label = { Text("Prezzo €") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text("Qualità", style = MaterialTheme.typography.labelLarge)
+                Row {
+                    (1..5).forEach { value ->
+                        IconButton(onClick = { quality = if (quality == value) 0 else value }, modifier = Modifier.size(40.dp)) {
+                            Icon(
+                                if (value <= quality) Icons.Rounded.Star else Icons.Rounded.StarBorder,
+                                contentDescription = "Qualità $value su 5",
+                                tint = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = storeId != null && product.isNotBlank() && price.isNotBlank(),
+                onClick = { storeId?.let { onSave(it, product, price, quality.takeIf { q -> q > 0 }) } },
+            ) { Text("Salva") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Annulla") } },
+    )
 }
 
 @Composable

@@ -127,7 +127,7 @@ object StoreLogoResolver {
         val connection = open(value)
         try {
             if (connection.responseCode !in 200..299) return@runCatching null
-            if (connection.contentLengthLong > MAX_LOGO_BYTES) return@runCatching null
+            if ((connection.getHeaderField("Content-Length")?.toLongOrNull() ?: -1L) > MAX_LOGO_BYTES) return@runCatching null
             val type = connection.contentType.orEmpty()
             val bytes = connection.inputStream.use { input ->
                 val buffer = java.io.ByteArrayOutputStream()

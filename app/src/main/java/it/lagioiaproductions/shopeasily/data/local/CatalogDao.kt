@@ -40,14 +40,22 @@ interface CatalogDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertStatus(status: SourceStatusEntity)
 
+    @Query("SELECT * FROM stores WHERE id = :id")
+    suspend fun store(id: String): StoreEntity?
+
     @Query("DELETE FROM offers WHERE expiresAt <= :now")
     suspend fun deleteExpired(now: Long)
 
-    @Query("DELETE FROM offers WHERE storeId = :storeId")
+    /** Prices the user reported (parserId "user") are never replaced by a sync. */
+    @Query("DELETE FROM offers WHERE storeId = :storeId AND parserId != 'user'")
     suspend fun deleteOffersForStore(storeId: String)
 
     @Query("DELETE FROM offers WHERE id IN (:ids)")
     suspend fun deleteOffers(ids: List<Long>)
+
+    /** Removes rows created by the obsolete Open Prices query whose filters were ignored by the API. */
+    @Query("DELETE FROM offers WHERE parserId = 'open-prices' AND sourceUrl LIKE '%location_osm_type%'")
+    suspend fun deleteLegacyOpenPricesOffers()
 
     @Transaction
     suspend fun replaceStoreOffers(storeId: String, offers: List<OfferEntity>) {

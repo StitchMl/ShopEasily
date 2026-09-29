@@ -15,14 +15,18 @@ import org.json.JSONObject
  */
 object OpenPricesSource {
     const val PARSER_ID = "open-prices"
-    private const val BASE = "https://prices.openfoodfacts.org/api/v1/prices"
+    private const val API = "https://prices.openfoodfacts.org/api/v1"
     private const val MAX_AGE_DAYS = 120L
 
-    fun url(osmType: String, osmId: Long, now: Long = System.currentTimeMillis()): String {
+    fun locationUrl(osmType: String, osmId: Long): String =
+        "$API/locations/osm/${osmType.uppercase(Locale.ROOT)}/$osmId"
+
+    fun locationId(json: String): Long? = runCatching { JSONObject(json).optLong("id").takeIf { it > 0 } }.getOrNull()
+
+    fun pricesUrl(locationId: Long, now: Long = System.currentTimeMillis()): String {
         val since = SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).apply { timeZone = TimeZone.getTimeZone("UTC") }
             .format(Date(now - MAX_AGE_DAYS * 24 * 60 * 60 * 1_000))
-        return "$BASE?location_osm_type=${osmType.uppercase(Locale.ROOT)}&location_osm_id=$osmId" +
-            "&date__gte=$since&order_by=-date&size=100"
+        return "$API/prices?location_id=$locationId&date__gte=$since&ordering=-date&page_size=100"
     }
 
     fun parse(json: String, sourceUrl: String): List<SourceProduct> {

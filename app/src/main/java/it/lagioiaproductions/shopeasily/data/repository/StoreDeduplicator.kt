@@ -39,7 +39,7 @@ object StoreDeduplicator {
             if (brand.isBlank() || isGenericName(record.brand)) return@forEach
             val store = canonicalName(record.storeName)
             if (overwrite || store !in byStore) byStore[store] = brand
-            if (overwrite) names[brand] = record.brand.trim() else names.putIfAbsent(brand, record.brand.trim())
+            if (overwrite || brand !in names) names[brand] = record.brand.trim()
             // Brands declared in OpenStreetMap also match other names containing them
             // ("Carrefour Market Roma"); brands only guessed from names match exactly.
             if (overwrite) partial += brand

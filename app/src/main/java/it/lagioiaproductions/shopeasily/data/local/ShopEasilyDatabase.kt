@@ -16,7 +16,7 @@ class CatalogConverters {
 
 @Database(
     entities = [StoreEntity::class, OfferEntity::class, SourceStatusEntity::class],
-    version = 8,
+    version = 9,
     exportSchema = false,
 )
 @TypeConverters(CatalogConverters::class)
@@ -78,6 +78,21 @@ abstract class ShopEasilyDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE offers ADD COLUMN userQuality INTEGER")
+                // Places that are not shops (a social network like "Meta", restaurants or
+                // offices returned by generic Google types) are dropped; Google places are
+                // rediscovered with the stricter food-shop filter on the next sync.
+                val notShops = "SELECT id FROM stores WHERE osmId IS NULL OR normalizedName IN " +
+                    "('meta','meta platforms','facebook','instagram','whatsapp','google','tiktok','telegram','youtube'," +
+                    "'tripadvisor','glovo','deliveroo','just eat','uber eats','amazon','linktree')"
+                db.execSQL("DELETE FROM offers WHERE parserId != 'user' AND storeId IN ($notShops)")
+                db.execSQL("DELETE FROM source_status WHERE storeId IN ($notShops)")
+                db.execSQL("DELETE FROM stores WHERE id IN ($notShops) AND id NOT IN (SELECT storeId FROM offers)")
+            }
+        }
+
         @Volatile private var instance: ShopEasilyDatabase? = null
 
         fun get(context: Context): ShopEasilyDatabase = instance ?: synchronized(this) {
@@ -85,7 +100,7 @@ abstract class ShopEasilyDatabase : RoomDatabase() {
                 context.applicationContext,
                 ShopEasilyDatabase::class.java,
                 "shopeasily.db",
-            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
                 .fallbackToDestructiveMigrationOnDowngrade(true)
                 .build().also { instance = it }
         }

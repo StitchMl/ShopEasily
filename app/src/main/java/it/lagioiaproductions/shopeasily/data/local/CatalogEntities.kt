@@ -56,6 +56,8 @@ data class OfferEntity(
     val productImageVerified: Boolean = false,
     /** Product sustainability labels from the source, separated by '|'. */
     val labels: String? = null,
+    /** Quality 1..5 given by the user for a price they reported themselves (parserId "user"). */
+    val userQuality: Int? = null,
 )
 
 @Entity(tableName = "source_status")

@@ -25,6 +25,29 @@ object NonShopSites {
         return hosts.any { marker -> host == marker.trimEnd('.') || host.contains(marker) }
     }
 
+    /**
+     * Online platforms (and their owners) that show up as a "place" when a shop's only
+     * web presence is a social page, or when a text search returns an office: "Meta",
+     * "Facebook", "Instagram"… are never a point of sale.
+     */
+    private val platformNames = setOf(
+        "meta", "meta platforms", "facebook", "instagram", "whatsapp", "messenger", "threads", "google", "google maps",
+        "youtube", "tiktok", "telegram", "twitter", "x", "linktree", "tripadvisor", "yelp", "thefork", "just eat",
+        "justeat", "deliveroo", "glovo", "uber eats", "ubereats", "everli", "amazon", "subito", "pagine gialle",
+        "paginegialle", "doveconviene", "volantinofacile", "promoqui", "tiendeo", "shopfully", "wikipedia",
+    )
+
+    fun isPlatformName(name: String?): Boolean {
+        if (name.isNullOrBlank()) return false
+        val normalized = java.text.Normalizer.normalize(name, java.text.Normalizer.Form.NFD)
+            .replace(Regex("\\p{M}+"), "")
+            .lowercase(Locale.ROOT)
+            .replace(Regex("[^a-z0-9]+"), " ")
+            .trim()
+            .removeSuffix(" inc").removeSuffix(" srl").removeSuffix(" spa").removeSuffix(" ltd").trim()
+        return normalized in platformNames
+    }
+
     /** The URL if it can be a shop's own website, otherwise null. */
     fun shopWebsiteOrNull(url: String?): String? = url?.takeIf { it.isNotBlank() && !isNonShop(it) }
 }

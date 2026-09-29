@@ -81,7 +81,7 @@ object BitmapLoader {
             connection.instanceFollowRedirects = true
             connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile) ShopEasily/0.5 (+https://github.com/StitchMl/ShopEasily)")
             if (connection.responseCode !in 200..299) return null
-            if (connection.contentLengthLong > MAX_DOWNLOAD_BYTES) return null
+            if ((connection.getHeaderField("Content-Length")?.toLongOrNull() ?: -1L) > MAX_DOWNLOAD_BYTES) return null
             connection.inputStream.use { input ->
                 val output = java.io.ByteArrayOutputStream()
                 val buffer = ByteArray(16 * 1024)
