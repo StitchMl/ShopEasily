@@ -16,7 +16,7 @@ class CatalogConverters {
 
 @Database(
     entities = [StoreEntity::class, OfferEntity::class, SourceStatusEntity::class],
-    version = 9,
+    version = 10,
     exportSchema = false,
 )
 @TypeConverters(CatalogConverters::class)
@@ -93,6 +93,14 @@ abstract class ShopEasilyDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE stores ADD COLUMN reviewRating REAL")
+                db.execSQL("ALTER TABLE stores ADD COLUMN reviewCount INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE stores ADD COLUMN priceLevel TEXT")
+            }
+        }
+
         @Volatile private var instance: ShopEasilyDatabase? = null
 
         fun get(context: Context): ShopEasilyDatabase = instance ?: synchronized(this) {
@@ -100,7 +108,7 @@ abstract class ShopEasilyDatabase : RoomDatabase() {
                 context.applicationContext,
                 ShopEasilyDatabase::class.java,
                 "shopeasily.db",
-            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
                 .fallbackToDestructiveMigrationOnDowngrade(true)
                 .build().also { instance = it }
         }

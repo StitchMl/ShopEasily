@@ -206,6 +206,7 @@ fun MapScreen(modifier: Modifier = Modifier) {
                 val logoKey = "store-logo-$index"
                 runCatching { style.addImage(logoKey, logos.getOrNull(index) ?: StoreLogoResolver.initialMarker(store.name)) }
                 Feature.fromGeometry(Point.fromLngLat(store.longitude, store.latitude)).apply {
+                    addStringProperty("storeId", store.id)
                     addStringProperty("name", store.name)
                     addStringProperty("logo", logoKey)
                 }
@@ -250,9 +251,14 @@ fun MapScreen(modifier: Modifier = Modifier) {
         if (map == null || !styleReady) return@DisposableEffect onDispose { }
         val listener = MapLibreMap.OnMapClickListener { coordinate ->
             val screenPoint = map.projection.toScreenLocation(coordinate)
-            val storeName = map.queryRenderedFeatures(screenPoint, "store-marks", "store-labels")
-                .firstOrNull()?.getStringProperty("name")
-            val store = stores.firstOrNull { it.name == storeName }
+            // Labels and icons of nearby shops can overlap. MapLibre does not guarantee
+            // feature order, so "first" could open DOC while the user tapped the adjacent
+            // Conad. Resolve every rendered ID and choose the geographically nearest pin.
+            val renderedIds = map.queryRenderedFeatures(screenPoint, "store-marks", "store-labels")
+                .mapNotNull { feature -> feature.getStringProperty("storeId")?.takeIf(String::isNotBlank) }
+                .distinct()
+                .toSet()
+            val store = closestStoreToTap(stores, renderedIds, coordinate.latitude, coordinate.longitude)
             if (store != null) {
                 runCatching { openNavigation(context, store) }
                 true
@@ -325,6 +331,19 @@ fun MapScreen(modifier: Modifier = Modifier) {
     }
 }
 
+internal fun closestStoreToTap(
+    stores: List<NearbyStore>,
+    renderedIds: Set<String>,
+    latitude: Double,
+    longitude: Double,
+): NearbyStore? = stores.asSequence()
+    .filter { it.id in renderedIds }
+    .minByOrNull { store ->
+        val latitudeDelta = store.latitude - latitude
+        val longitudeDelta = (store.longitude - longitude) * kotlin.math.cos(Math.toRadians(latitude))
+        latitudeDelta * latitudeDelta + longitudeDelta * longitudeDelta
+    }
+
 private fun openNavigation(context: android.content.Context, store: NearbyStore) {
     val uri = Uri.parse(
         "google.navigation:q=${store.latitude},${store.longitude}&mode=d",
@@ -394,6 +413,14 @@ private fun StoreCard(store: NearbyStore, onNavigate: () -> Unit) {
                         color = MaterialTheme.colorScheme.primary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                store.reviewRating?.let { rating ->
+                    Text(
+                        "★ %.1f · %d recensioni".format(rating, store.reviewCount),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.secondary,
+                        maxLines = 1,
                     )
                 }
                 Text(

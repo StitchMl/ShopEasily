@@ -81,6 +81,9 @@ data class NearbyStore(
     val brand: String? = null,
     val brandWikidata: String? = null,
     val place: String? = null,
+    val reviewRating: Double? = null,
+    val reviewCount: Int = 0,
+    val priceLevel: String? = null,
 )
 
 class OnDeviceCatalogRepository(
@@ -601,19 +604,27 @@ class OnDeviceCatalogRepository(
      * a place near an OSM shop with a matching name gives it its website; a place missing
      * from OSM becomes a new store. Queried at most every 3 days per area to limit API cost.
      */
-    private fun mergeGooglePlaces(osm: List<NearbyStore>, latitude: Double, longitude: Double, radius: Int): List<NearbyStore> {
+    private suspend fun mergeGooglePlaces(osm: List<NearbyStore>, latitude: Double, longitude: Double, radius: Int): List<NearbyStore> {
         if (!googlePlaces.isEnabled) return osm
+        val previous = dao.stores().associateBy(StoreEntity::id)
+        val result = osm.map { store ->
+            val saved = previous[store.id]
+            store.copy(
+                reviewRating = saved?.reviewRating,
+                reviewCount = saved?.reviewCount ?: 0,
+                priceLevel = saved?.priceLevel,
+            )
+        }.toMutableList()
         val preferences = appContext.getSharedPreferences("google_places_v2", Context.MODE_PRIVATE)
         val area = "${(latitude * 100).roundToInt()}|${(longitude * 100).roundToInt()}|$radius"
         val cachedAt = preferences.getLong(area, 0L)
         val places = if (System.currentTimeMillis() - cachedAt < GOOGLE_REFRESH_MS) {
-            return osm
+            return result
         } else {
             runCatching { googlePlaces.nearbyShops(latitude, longitude, radius) }.getOrDefault(emptyList())
                 .also { if (it.isNotEmpty()) preferences.edit().putLong(area, System.currentTimeMillis()).apply() }
         }
-        if (places.isEmpty()) return osm
-        val result = osm.toMutableList()
+        if (places.isEmpty()) return result
         places.filterNot { NonShopSites.isPlatformName(it.name) }.forEach { place ->
             val placeTokens = StoreDeduplicator.meaningfulTokens(place.name).toSet()
             val index = result.indexOfFirst { store ->
@@ -623,7 +634,12 @@ class OnDeviceCatalogRepository(
             if (index >= 0) {
                 val store = result[index]
                 val site = NonShopSites.shopWebsiteOrNull(place.website)
-                if (store.website == null && site != null) result[index] = store.copy(website = HttpFetcher.secureUrl(site))
+                result[index] = store.copy(
+                    website = store.website ?: site?.let(HttpFetcher::secureUrl),
+                    reviewRating = place.rating ?: store.reviewRating,
+                    reviewCount = maxOf(store.reviewCount, place.reviewCount),
+                    priceLevel = place.priceLevel ?: store.priceLevel,
+                )
             } else {
                 val category = GooglePlacesSource.category(place.types)
                 val sustainability = StoreSustainability.evaluate(place.name, category, GooglePlacesSource.sustainabilityTags(place))
@@ -640,6 +656,9 @@ class OnDeviceCatalogRepository(
                     sustainabilityScore = sustainability.score,
                     sustainabilityReasons = sustainability.reasons,
                     place = place.address,
+                    reviewRating = place.rating,
+                    reviewCount = place.reviewCount,
+                    priceLevel = place.priceLevel,
                 )
             }
         }
@@ -1033,6 +1052,9 @@ class OnDeviceCatalogRepository(
         brand = brand,
         brandWikidata = brandWikidata,
         place = place,
+        reviewRating = reviewRating,
+        reviewCount = reviewCount,
+        priceLevel = priceLevel,
     )
 
     private fun StoreEntity.toNearbyStore() = NearbyStore(
@@ -1051,6 +1073,9 @@ class OnDeviceCatalogRepository(
         brand = brand,
         brandWikidata = brandWikidata,
         place = place,
+        reviewRating = reviewRating,
+        reviewCount = reviewCount,
+        priceLevel = priceLevel,
     )
 
     private fun NearbyStore.status(state: SourceState, now: Long, count: Int, detail: String?) =

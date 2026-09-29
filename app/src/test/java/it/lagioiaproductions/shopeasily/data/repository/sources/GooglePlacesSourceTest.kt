@@ -10,11 +10,15 @@ class GooglePlacesSourceTest {
     fun parsesPlacesAnswer() {
         val json = """{"places":[{"id":"abc","displayName":{"text":"Bottega Bio Rossi","languageCode":"it"},
             "location":{"latitude":41.9,"longitude":12.5},"websiteUri":"http://bottegabiorossi.it/",
-            "types":["grocery_store","food","store"],"formattedAddress":"Via Appia 21, Roma"}]}"""
+            "types":["grocery_store","food","store"],"formattedAddress":"Via Appia 21, Roma",
+            "rating":4.6,"userRatingCount":125,"priceLevel":"PRICE_LEVEL_MODERATE"}]}"""
         val place = GooglePlacesSource.parse(json).single()
         assertEquals("Bottega Bio Rossi", place.name)
         assertEquals("http://bottegabiorossi.it/", place.website)
         assertEquals("food", GooglePlacesSource.category(place.types))
+        assertEquals(4.6, place.rating!!, 0.001)
+        assertEquals(125, place.reviewCount)
+        assertEquals("PRICE_LEVEL_MODERATE", place.priceLevel)
     }
 
     @Test

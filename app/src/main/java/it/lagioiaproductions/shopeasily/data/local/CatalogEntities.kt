@@ -31,6 +31,9 @@ data class StoreEntity(
     val brandWikidata: String? = null,
     /** City/district from OSM address tags: never mistaken for a brand. */
     val place: String? = null,
+    val reviewRating: Double? = null,
+    val reviewCount: Int = 0,
+    val priceLevel: String? = null,
 )
 
 @Entity(

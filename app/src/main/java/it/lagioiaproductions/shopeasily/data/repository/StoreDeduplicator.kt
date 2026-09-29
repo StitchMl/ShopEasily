@@ -259,6 +259,9 @@ object StoreDeduplicator {
                 brand = best.brand ?: matches.firstNotNullOfOrNull(NearbyStore::brand),
                 brandWikidata = best.brandWikidata ?: matches.firstNotNullOfOrNull(NearbyStore::brandWikidata),
                 place = best.place ?: matches.firstNotNullOfOrNull(NearbyStore::place),
+                reviewRating = matches.maxByOrNull(NearbyStore::reviewCount)?.reviewRating,
+                reviewCount = matches.maxOf(NearbyStore::reviewCount),
+                priceLevel = matches.firstNotNullOfOrNull(NearbyStore::priceLevel),
                 distanceMeters = matches.minOf(NearbyStore::distanceMeters),
             )
         }

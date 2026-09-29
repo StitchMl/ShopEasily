@@ -18,6 +18,10 @@ data class GooglePlace(
     val address: String?,
     /** Google's main category for the place (e.g. "supermarket", "restaurant"). */
     val primaryType: String? = null,
+    val rating: Double? = null,
+    val reviewCount: Int = 0,
+    /** Google Places price level; null means that Google has no price indication. */
+    val priceLevel: String? = null,
 )
 
 /**
@@ -106,7 +110,7 @@ class GooglePlacesSource(
         private const val BASE = "https://places.googleapis.com/v1/places"
         private const val FIELD_MASK =
             "places.id,places.displayName,places.location,places.websiteUri,places.types,places.primaryType," +
-                "places.formattedAddress,places.businessStatus"
+                "places.formattedAddress,places.businessStatus,places.rating,places.userRatingCount,places.priceLevel"
         /**
          * Places where food is sold to take home. The generic "food"/"store" types are not
          * enough: restaurants, bars and company offices (e.g. a place called "Meta") carry them.
@@ -183,6 +187,9 @@ class GooglePlacesSource(
                     types = types,
                     address = place.optString("formattedAddress").takeIf(String::isNotBlank),
                     primaryType = place.optString("primaryType").takeIf(String::isNotBlank),
+                    rating = place.optDouble("rating").takeIf { place.has("rating") && it in 1.0..5.0 },
+                    reviewCount = place.optInt("userRatingCount").coerceAtLeast(0),
+                    priceLevel = place.optString("priceLevel").takeIf(String::isNotBlank),
                 )
             }
         }

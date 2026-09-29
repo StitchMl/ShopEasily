@@ -119,6 +119,8 @@ import it.lagioiaproductions.shopeasily.data.repository.NearbyStore
 import it.lagioiaproductions.shopeasily.data.model.ProductImageKey
 import it.lagioiaproductions.shopeasily.domain.SortMode
 import it.lagioiaproductions.shopeasily.domain.EcoBasketEstimate
+import it.lagioiaproductions.shopeasily.domain.PriceTendency
+import it.lagioiaproductions.shopeasily.domain.StoreAssessment
 import it.lagioiaproductions.shopeasily.domain.ProductImageMatcher
 import it.lagioiaproductions.shopeasily.domain.sustainabilityScore
 import it.lagioiaproductions.shopeasily.domain.StoreSustainabilityResult
@@ -405,6 +407,7 @@ fun SearchScreen(
                             LocalAlternativeCard(
                                 store = store,
                                 estimate = state.ecoEstimatedPlans[store.id],
+                                assessment = state.storeAssessments[store.id],
                                 onNavigate = { openNavigation(context, store) },
                                 onAddPrice = {
                                     preferredReportStoreId = store.id
@@ -588,6 +591,7 @@ private fun EmptyResults(hasAlternatives: Boolean) {
 private fun LocalAlternativeCard(
     store: NearbyStore,
     estimate: EcoBasketEstimate?,
+    assessment: StoreAssessment?,
     onNavigate: () -> Unit,
     onAddPrice: () -> Unit,
 ) {
@@ -627,6 +631,24 @@ private fun LocalAlternativeCard(
                         "Carrello stimato ~${NumberFormat.getCurrencyInstance(Locale.ITALY).format(it.total)}",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                    )
+                }
+                assessment?.takeIf { it.qualityScore != null || it.valueScore != null }?.let { score ->
+                    val priceLabel = when (score.priceTendency) {
+                        PriceTendency.LOW -> "prezzi bassi"
+                        PriceTendency.AVERAGE -> "prezzi medi"
+                        PriceTendency.HIGH -> "prezzi alti"
+                        null -> null
+                    }
+                    Text(
+                        listOfNotNull(
+                            score.qualityScore?.let { "★ qualità $it" },
+                            score.valueScore?.let { "€ convenienza $it" },
+                            priceLabel,
+                        ).joinToString(" · "),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.secondary,
                         maxLines = 1,
                     )
                 }

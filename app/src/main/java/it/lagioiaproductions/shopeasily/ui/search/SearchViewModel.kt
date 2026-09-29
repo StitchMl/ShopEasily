@@ -24,6 +24,8 @@ import it.lagioiaproductions.shopeasily.domain.SearchFilters
 import it.lagioiaproductions.shopeasily.domain.SortMode
 import it.lagioiaproductions.shopeasily.domain.TransportProfile
 import it.lagioiaproductions.shopeasily.domain.StoreSustainabilityResult
+import it.lagioiaproductions.shopeasily.domain.StoreAssessment
+import it.lagioiaproductions.shopeasily.domain.StoreAssessmentEngine
 import it.lagioiaproductions.shopeasily.sync.CatalogSyncWorker
 import it.lagioiaproductions.shopeasily.sync.SyncProgress
 import java.text.SimpleDateFormat
@@ -68,6 +70,7 @@ data class SearchUiState(
     /** Clearly-labelled projections for eligible green stores; never treated as observed prices. */
     val ecoEstimatedPlans: Map<String, EcoBasketEstimate> = emptyMap(),
     val bestEcoEstimatedPlan: EcoBasketEstimate? = null,
+    val storeAssessments: Map<String, StoreAssessment> = emptyMap(),
     val nearbyOffers: Int = 0,
     val expiringToday: Int = 0,
     val priceDrops: Int = 0,
@@ -488,6 +491,9 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                     },
                     transport = transport,
                 )
+                val assessments = storesCache.associate { store ->
+                    store.id to StoreAssessmentEngine.assess(store, catalog)
+                }
                 CartSummary(
                     items = cart.size,
                     productsTotal = productsTotal,
@@ -503,6 +509,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                     eco = eco?.takeIf { !filters.sustainableOnly && it.missingItems.isEmpty() }?.monetaryTotal,
                     ecoEstimates = ecoEstimates.associateBy(EcoBasketEstimate::storeId),
                     bestEcoEstimate = ecoEstimates.firstOrNull(),
+                    assessments = assessments,
                 )
             }
             val history = withContext(Dispatchers.IO) {
@@ -538,6 +545,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                     sustainableTotal = summary.eco,
                     ecoEstimatedPlans = summary.ecoEstimates,
                     bestEcoEstimatedPlan = summary.bestEcoEstimate,
+                    storeAssessments = summary.assessments,
                     unavailableSources = history.unavailable,
                     priceDrops = history.drops ?: state.priceDrops,
                     historicalLows = history.lows ?: state.historicalLows,
@@ -603,6 +611,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         val eco: Double?,
         val ecoEstimates: Map<String, EcoBasketEstimate>,
         val bestEcoEstimate: EcoBasketEstimate?,
+        val assessments: Map<String, StoreAssessment>,
     )
 
     private data class HistorySummary(
