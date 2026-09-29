@@ -118,6 +118,7 @@ import it.lagioiaproductions.shopeasily.data.model.Offer
 import it.lagioiaproductions.shopeasily.data.repository.NearbyStore
 import it.lagioiaproductions.shopeasily.data.model.ProductImageKey
 import it.lagioiaproductions.shopeasily.domain.SortMode
+import it.lagioiaproductions.shopeasily.domain.EcoBasketEstimate
 import it.lagioiaproductions.shopeasily.domain.ProductImageMatcher
 import it.lagioiaproductions.shopeasily.domain.sustainabilityScore
 import it.lagioiaproductions.shopeasily.domain.StoreSustainabilityResult
@@ -373,6 +374,11 @@ fun SearchScreen(
                     state = listState,
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
+                    if (state.filters.sustainableOnly) {
+                        state.bestEcoEstimatedPlan?.let { plan ->
+                            item { EcoEstimateCard(plan) }
+                        }
+                    }
                     if (state.offers.isEmpty()) item { EmptyResults(hasAlternatives = state.localAlternatives.isNotEmpty()) }
                     items(items = state.offers, key = Offer::id) { offer ->
                         OfferCard(
@@ -398,6 +404,7 @@ fun SearchScreen(
                         items(items = state.localAlternatives, key = { "local-${it.id}" }) { store ->
                             LocalAlternativeCard(
                                 store = store,
+                                estimate = state.ecoEstimatedPlans[store.id],
                                 onNavigate = { openNavigation(context, store) },
                                 onAddPrice = {
                                     preferredReportStoreId = store.id
@@ -539,7 +546,13 @@ private fun HomeInsights(state: SearchUiState) {
         Insight(Icons.AutoMirrored.Rounded.ShowChart, state.historicalLows.toString(), "Minimi")
         Insight(Icons.Rounded.NearMe, state.nearbyOffers.toString(), "Vicino")
         Insight(Icons.Rounded.Storefront, state.oneStopTotal?.let(money::format) ?: "—", "1 fermata")
-        Insight(Icons.Rounded.Eco, state.sustainableTotal?.let(money::format) ?: "—", "Eco")
+        Insight(
+            Icons.Rounded.Eco,
+            state.sustainableTotal?.let(money::format)
+                ?: state.bestEcoEstimatedPlan?.let { "~${money.format(it.total)}" }
+                ?: "—",
+            "Eco",
+        )
         Insight(Icons.Rounded.WarningAmber, state.unavailableSources.toString(), "Fonti")
         Insight(Icons.Rounded.Favorite, state.reachedTargets.toString(), "Obiettivi")
     }
@@ -574,6 +587,7 @@ private fun EmptyResults(hasAlternatives: Boolean) {
 @Composable
 private fun LocalAlternativeCard(
     store: NearbyStore,
+    estimate: EcoBasketEstimate?,
     onNavigate: () -> Unit,
     onAddPrice: () -> Unit,
 ) {
@@ -608,11 +622,58 @@ private fun LocalAlternativeCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                 )
+                estimate?.let {
+                    Text(
+                        "Carrello stimato ~${NumberFormat.getCurrencyInstance(Locale.ITALY).format(it.total)}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                    )
+                }
             }
             IconButton(onClick = onAddPrice, modifier = Modifier.size(40.dp)) {
                 Icon(Icons.Rounded.AddCircle, contentDescription = "Aggiungi prezzo per ${store.name}")
             }
             Icon(Icons.Rounded.Navigation, contentDescription = "Indicazioni per ${store.name}")
+        }
+    }
+}
+
+@Composable
+private fun EcoEstimateCard(plan: EcoBasketEstimate) {
+    val money = NumberFormat.getCurrencyInstance(Locale.ITALY)
+    val emissions = if (plan.emissionKg < 1.0) {
+        "%.0f g CO₂".format(Locale.ITALY, plan.emissionKg * 1_000)
+    } else {
+        "%.1f kg CO₂".format(Locale.ITALY, plan.emissionKg)
+    }
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.Eco, contentDescription = null, modifier = Modifier.size(20.dp))
+                Text(
+                    "Piano eco stimato · ${plan.storeName}",
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    modifier = Modifier.padding(start = 6.dp).weight(1f),
+                )
+                Text("~${money.format(plan.total)}", fontWeight = FontWeight.Bold)
+            }
+            Text(
+                "Prodotti ~${money.format(plan.productsTotal)} + viaggio ${money.format(plan.travelCost)} · $emissions · foglia ${plan.greenScore}",
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 2,
+            )
+            Text(
+                "Stima da mediane locali, non è un prezzo pubblicato dal negozio" +
+                    if (plan.lowConfidenceItems > 0) " · ${plan.lowConfidenceItems} voci con pochi dati" else "",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+            )
         }
     }
 }

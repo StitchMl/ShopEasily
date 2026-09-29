@@ -38,9 +38,10 @@ object OfferRanking {
                 offer.isEligibleFor(filters.userAge)
         }
 
-        val candidates = if (filters.sustainableOnly && filtered.isNotEmpty()) {
-            val bestScore = filtered.maxOf(Offer::sustainabilityScore)
-            filtered.filter { it.sustainabilityScore() >= bestScore - SUSTAINABILITY_BAND }
+        val candidates = if (filters.sustainableOnly) {
+            // Green mode is a real eligibility constraint, not a relative "best of a bad lot".
+            // Product labels still affect ordering, but cannot make an unsuitable store pass.
+            filtered.filter { it.storeSustainabilityScore >= StoreSustainabilityResult.LEAF_THRESHOLD }
         } else {
             filtered
         }
@@ -74,7 +75,6 @@ object OfferRanking {
 
     private fun Offer.unitPriceOrPrice(): Double = unitPrice ?: price
 
-    private const val SUSTAINABILITY_BAND = 20
 }
 
 private val QUANTITY_IN_NAME = Regex("\\b\\d+([.,]\\d+)?\\s?(g|kg|ml|l|cl|pz)\\b", RegexOption.IGNORE_CASE)

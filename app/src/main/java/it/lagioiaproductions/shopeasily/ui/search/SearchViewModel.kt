@@ -15,11 +15,15 @@ import it.lagioiaproductions.shopeasily.data.repository.PriceWatchRepository
 import it.lagioiaproductions.shopeasily.data.repository.StoreDeduplicator
 import it.lagioiaproductions.shopeasily.domain.BasketGoal
 import it.lagioiaproductions.shopeasily.domain.BasketOptimizer
+import it.lagioiaproductions.shopeasily.domain.EcoBasketEstimate
+import it.lagioiaproductions.shopeasily.domain.EcoBasketEstimator
+import it.lagioiaproductions.shopeasily.domain.EcoStoreCandidate
 import it.lagioiaproductions.shopeasily.domain.OfferRanking
 import it.lagioiaproductions.shopeasily.domain.ProductMatcher
 import it.lagioiaproductions.shopeasily.domain.SearchFilters
 import it.lagioiaproductions.shopeasily.domain.SortMode
 import it.lagioiaproductions.shopeasily.domain.TransportProfile
+import it.lagioiaproductions.shopeasily.domain.StoreSustainabilityResult
 import it.lagioiaproductions.shopeasily.sync.CatalogSyncWorker
 import it.lagioiaproductions.shopeasily.sync.SyncProgress
 import java.text.SimpleDateFormat
@@ -61,6 +65,9 @@ data class SearchUiState(
     val oneStopTotal: Double? = null,
     val bestBasketTotal: Double? = null,
     val sustainableTotal: Double? = null,
+    /** Clearly-labelled projections for eligible green stores; never treated as observed prices. */
+    val ecoEstimatedPlans: Map<String, EcoBasketEstimate> = emptyMap(),
+    val bestEcoEstimatedPlan: EcoBasketEstimate? = null,
     val nearbyOffers: Int = 0,
     val expiringToday: Int = 0,
     val priceDrops: Int = 0,
@@ -378,6 +385,10 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                         .filter { store ->
                             allRanked.none { offer -> offer.storeName.equals(store.name, ignoreCase = true) }
                         }
+                        .filter { store ->
+                            !filters.sustainableOnly ||
+                                store.sustainabilityScore >= StoreSustainabilityResult.LEAF_THRESHOLD
+                        }
                         .sortedWith(
                             compareByDescending<NearbyStore> { it.sustainabilityScore }
                                 .thenBy { if (it.category == "marketplace" || it.category == "farm") 0 else 1 }
@@ -464,6 +475,19 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 val oneStop = BasketOptimizer.optimize(pendingItems, catalog, maximumStores = 1, transport = transport, goal = BasketGoal.CHEAPEST).firstOrNull()
                 val best = BasketOptimizer.optimize(pendingItems, catalog, transport = transport, goal = BasketGoal.CHEAPEST).firstOrNull()
                 val eco = BasketOptimizer.optimize(pendingItems, catalog, transport = transport, goal = BasketGoal.ECOLOGICAL).firstOrNull()
+                val ecoEstimates = EcoBasketEstimator.estimate(
+                    requestedItems = pendingItems,
+                    catalog = catalog,
+                    stores = storesCache.map { store ->
+                        EcoStoreCandidate(
+                            id = store.id,
+                            name = store.name,
+                            distanceMeters = store.distanceMeters,
+                            greenScore = store.sustainabilityScore,
+                        )
+                    },
+                    transport = transport,
+                )
                 CartSummary(
                     items = cart.size,
                     productsTotal = productsTotal,
@@ -474,7 +498,11 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                     pending = pendingItems.size,
                     oneStop = oneStop?.takeIf { it.missingItems.isEmpty() }?.monetaryTotal,
                     best = best?.takeIf { it.missingItems.isEmpty() }?.monetaryTotal,
-                    eco = eco?.takeIf { it.missingItems.isEmpty() }?.monetaryTotal,
+                    // CatalogPrice does not carry the verified store green score. In strict
+                    // green mode do not present that unconstrained plan as an exact eco total.
+                    eco = eco?.takeIf { !filters.sustainableOnly && it.missingItems.isEmpty() }?.monetaryTotal,
+                    ecoEstimates = ecoEstimates.associateBy(EcoBasketEstimate::storeId),
+                    bestEcoEstimate = ecoEstimates.firstOrNull(),
                 )
             }
             val history = withContext(Dispatchers.IO) {
@@ -508,6 +536,8 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                     oneStopTotal = summary.oneStop,
                     bestBasketTotal = summary.best,
                     sustainableTotal = summary.eco,
+                    ecoEstimatedPlans = summary.ecoEstimates,
+                    bestEcoEstimatedPlan = summary.bestEcoEstimate,
                     unavailableSources = history.unavailable,
                     priceDrops = history.drops ?: state.priceDrops,
                     historicalLows = history.lows ?: state.historicalLows,
@@ -571,6 +601,8 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         val oneStop: Double?,
         val best: Double?,
         val eco: Double?,
+        val ecoEstimates: Map<String, EcoBasketEstimate>,
+        val bestEcoEstimate: EcoBasketEstimate?,
     )
 
     private data class HistorySummary(

@@ -19,8 +19,10 @@ class OfferRankingTest {
     }
 
     @Test
-    fun sustainableFilterKeepsTheBestAvailableBand() {
-        val result = OfferRanking.apply(offers, SearchFilters(sustainableOnly = true))
+    fun sustainableFilterExcludesStoresBelowGreenThreshold() {
+        val deceptivelyLabelled = offer(id = 3, price = 0.5, distance = 100, sustainable = true)
+            .copy(storeSustainabilityScore = 20)
+        val result = OfferRanking.apply(offers + deceptivelyLabelled, SearchFilters(sustainableOnly = true))
 
         assertEquals(listOf(1L), result.map(Offer::id))
     }
@@ -73,5 +75,6 @@ class OfferRankingTest {
         qualityScore = 4f,
         sustainabilityLabels = if (sustainable) listOf("Bio") else emptyList(),
         validUntil = null,
+        storeSustainabilityScore = if (sustainable) 60 else 20,
     )
 }
