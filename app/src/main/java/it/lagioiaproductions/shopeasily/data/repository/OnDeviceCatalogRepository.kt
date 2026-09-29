@@ -610,12 +610,14 @@ class OnDeviceCatalogRepository(
         val result = osm.map { store ->
             val saved = previous[store.id]
             store.copy(
+                name = saved?.name ?: store.name,
                 reviewRating = saved?.reviewRating,
                 reviewCount = saved?.reviewCount ?: 0,
                 priceLevel = saved?.priceLevel,
             )
         }.toMutableList()
-        val preferences = appContext.getSharedPreferences("google_places_v2", Context.MODE_PRIVATE)
+        // Versioned because identity reconciliation changed: run one fresh lookup after update.
+        val preferences = appContext.getSharedPreferences("google_places_v3", Context.MODE_PRIVATE)
         val area = "${(latitude * 100).roundToInt()}|${(longitude * 100).roundToInt()}|$radius"
         val cachedAt = preferences.getLong(area, 0L)
         val places = if (System.currentTimeMillis() - cachedAt < GOOGLE_REFRESH_MS) {
@@ -626,15 +628,12 @@ class OnDeviceCatalogRepository(
         }
         if (places.isEmpty()) return result
         places.filterNot { NonShopSites.isPlatformName(it.name) }.forEach { place ->
-            val placeTokens = StoreDeduplicator.meaningfulTokens(place.name).toSet()
-            val index = result.indexOfFirst { store ->
-                distanceMeters(store.latitude, store.longitude, place.latitude, place.longitude) <= 120 &&
-                    StoreDeduplicator.meaningfulTokens(store.name).any(placeTokens::contains)
-            }
-            if (index >= 0) {
-                val store = result[index]
+            val identity = StoreIdentityMatcher.match(result, place)
+            if (identity != null) {
+                val store = result[identity.index]
                 val site = NonShopSites.shopWebsiteOrNull(place.website)
-                result[index] = store.copy(
+                result[identity.index] = store.copy(
+                    name = place.name.takeIf { identity.adoptSourceName } ?: store.name,
                     website = store.website ?: site?.let(HttpFetcher::secureUrl),
                     reviewRating = place.rating ?: store.reviewRating,
                     reviewCount = maxOf(store.reviewCount, place.reviewCount),
@@ -1128,7 +1127,7 @@ class OnDeviceCatalogRepository(
         id = id,
         productName = productName,
         brand = null,
-        storeName = storeName,
+        storeName = store?.name ?: storeName,
         price = price,
         unitPrice = null,
         distanceMeters = store?.distanceMeters ?: distanceMeters,
