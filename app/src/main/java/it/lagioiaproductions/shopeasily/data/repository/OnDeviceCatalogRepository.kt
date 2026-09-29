@@ -331,7 +331,11 @@ class OnDeviceCatalogRepository(
             now - area.getLong("at", 0L) < STORE_LIST_TTL_MS
         val known = if (sameArea && !force) storedStores().filter { it.distanceMeters <= radiusKm * 1_000 } else emptyList()
         val discovered: List<NearbyStore> = if (known.isNotEmpty()) {
-            emptyList()
+            // OSM geometry can be cached for a week, but branch identities cannot: banners
+            // change and Google may already expose the new official name. Reconcile the
+            // cached stores independently (the Places source has its own 3-day throttle).
+            runCatching { mergeGooglePlaces(known, latitude, longitude, radiusKm * 1_000) }
+                .getOrDefault(known)
         } else {
             runCatching { nearbyStores(latitude, longitude, radiusKm, includeGooglePlaces = true) }.getOrDefault(emptyList())
                 .also { stores ->

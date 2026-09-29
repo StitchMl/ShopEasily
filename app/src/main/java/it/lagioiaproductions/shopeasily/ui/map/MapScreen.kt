@@ -177,7 +177,9 @@ fun MapScreen(modifier: Modifier = Modifier) {
         val radius = runCatching { preferences.preferences.first().radiusKm }.getOrDefault(10)
         isLoading = true
         val refreshedStores = runCatching {
-            repository.nearbyStores(position.latitude, position.longitude, radius)
+            // Identity reconciliation is lightweight and independently throttled: use it
+            // even when OSM geometry is cached so renamed branches appear immediately.
+            repository.nearbyStores(position.latitude, position.longitude, radius, includeGooglePlaces = true)
         }.getOrDefault(emptyList())
         if (refreshedStores.isNotEmpty()) stores = refreshedStores
         isLoading = false
