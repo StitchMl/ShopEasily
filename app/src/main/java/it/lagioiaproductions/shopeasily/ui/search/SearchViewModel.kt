@@ -82,6 +82,8 @@ data class SearchUiState(
     /** Incremented when the user changes sort/filters/query: the list scrolls back to the top. */
     val orderVersion: Int = 0,
     val message: String? = null,
+    /** Nearby markets and shops with no usable public price yet: never hidden from Home. */
+    val localAlternatives: List<NearbyStore> = emptyList(),
 )
 
 /**
@@ -372,6 +374,17 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                         .groupBy { it.productImageUrl!! }
                         .filterValues { offers -> offers.map { it.productName.lowercase(Locale.ROOT) }.distinct().size > 1 }
                         .keys,
+                    localAlternatives = storesCache.asSequence()
+                        .filter { store ->
+                            allRanked.none { offer -> offer.storeName.equals(store.name, ignoreCase = true) }
+                        }
+                        .sortedWith(
+                            compareByDescending<NearbyStore> { it.sustainabilityScore }
+                                .thenBy { if (it.category == "marketplace" || it.category == "farm") 0 else 1 }
+                                .thenBy(NearbyStore::distanceMeters),
+                        )
+                        .take(MAX_LOCAL_ALTERNATIVES)
+                        .toList(),
                 )
             }
             _uiState.update { state ->
@@ -384,6 +397,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                     nearbyOffers = result.nearby,
                     expiringToday = result.expiringToday,
                     ambiguousImageUrls = result.ambiguousImages,
+                    localAlternatives = result.localAlternatives,
                     isLoading = false,
                     orderVersion = if (userChangePending) state.orderVersion + 1 else state.orderVersion,
                 )
@@ -537,7 +551,12 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         val nearby: Int,
         val expiringToday: Int,
         val ambiguousImages: Set<String>,
+        val localAlternatives: List<NearbyStore>,
     )
+
+    private companion object {
+        const val MAX_LOCAL_ALTERNATIVES = 12
+    }
 
     private data class CartLine(val price: Double, val storeName: String, val distance: Int)
 

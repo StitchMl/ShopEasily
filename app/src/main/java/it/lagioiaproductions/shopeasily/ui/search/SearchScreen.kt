@@ -5,6 +5,9 @@ package it.lagioiaproductions.shopeasily.ui.search
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.pm.PackageManager
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -101,6 +104,7 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.LocalGasStation
 import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.LocalOffer
+import androidx.compose.material.icons.rounded.Navigation
 import androidx.compose.material.icons.rounded.Search
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.Lifecycle
@@ -111,6 +115,7 @@ import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import it.lagioiaproductions.shopeasily.R
 import it.lagioiaproductions.shopeasily.data.model.Offer
+import it.lagioiaproductions.shopeasily.data.repository.NearbyStore
 import it.lagioiaproductions.shopeasily.data.model.ProductImageKey
 import it.lagioiaproductions.shopeasily.domain.SortMode
 import it.lagioiaproductions.shopeasily.domain.ProductImageMatcher
@@ -148,10 +153,13 @@ fun SearchScreen(
 
     val listState = rememberLazyListState()
     var showPriceDialog by remember { mutableStateOf(false) }
+    var preferredReportStoreId by remember { mutableStateOf<String?>(null) }
     if (showPriceDialog) {
         val reportStores by viewModel.reportStores.collectAsStateWithLifecycle()
         UserPriceDialog(
             stores = reportStores,
+            preferredStoreId = preferredReportStoreId,
+            initialProduct = state.query,
             onDismiss = { showPriceDialog = false },
             onSave = { storeId, product, price, quality ->
                 viewModel.addUserPrice(storeId, product, price, quality)
@@ -278,6 +286,7 @@ fun SearchScreen(
                 )
                 IconButton(
                     onClick = {
+                        preferredReportStoreId = null
                         viewModel.loadReportStores()
                         showPriceDialog = true
                     },
@@ -359,12 +368,12 @@ fun SearchScreen(
             Spacer(Modifier.height(8.dp))
 
             when {
-                state.isLoading && state.offers.isEmpty() -> CircularProgressIndicator()
-                state.offers.isEmpty() -> EmptyResults()
+                state.isLoading && state.offers.isEmpty() && state.localAlternatives.isEmpty() -> CircularProgressIndicator()
                 else -> LazyColumn(
                     state = listState,
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
+                    if (state.offers.isEmpty()) item { EmptyResults(hasAlternatives = state.localAlternatives.isNotEmpty()) }
                     items(items = state.offers, key = Offer::id) { offer ->
                         OfferCard(
                             offer = offer,
@@ -376,6 +385,27 @@ fun SearchScreen(
                             } == true,
                             onToggle = { viewModel.toggleOfferSelection(offer) },
                         )
+                    }
+                    if (state.localAlternatives.isNotEmpty() && !state.showSelectedOnly) {
+                        item {
+                            Text(
+                                "Mercati e botteghe vicini",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(top = 6.dp),
+                            )
+                        }
+                        items(items = state.localAlternatives, key = { "local-${it.id}" }) { store ->
+                            LocalAlternativeCard(
+                                store = store,
+                                onNavigate = { openNavigation(context, store) },
+                                onAddPrice = {
+                                    preferredReportStoreId = store.id
+                                    viewModel.loadReportStores()
+                                    showPriceDialog = true
+                                },
+                            )
+                        }
                     }
                     item { Spacer(Modifier.height(16.dp)) }
                 }
@@ -389,12 +419,14 @@ fun SearchScreen(
  */
 @Composable
 private fun UserPriceDialog(
-    stores: List<it.lagioiaproductions.shopeasily.data.repository.NearbyStore>,
+    stores: List<NearbyStore>,
+    preferredStoreId: String?,
+    initialProduct: String,
     onDismiss: () -> Unit,
     onSave: (storeId: String, product: String, price: String, quality: Int?) -> Unit,
 ) {
-    var storeId by remember { mutableStateOf<String?>(null) }
-    var product by remember { mutableStateOf("") }
+    var storeId by remember(preferredStoreId) { mutableStateOf(preferredStoreId) }
+    var product by remember(initialProduct) { mutableStateOf(initialProduct) }
     var price by remember { mutableStateOf("") }
     var quality by remember { mutableStateOf(0) }
     var menuOpen by remember { mutableStateOf(false) }
@@ -528,11 +560,82 @@ private fun Insight(icon: ImageVector, value: String, label: String) {
 }
 
 @Composable
-private fun EmptyResults() {
+private fun EmptyResults(hasAlternatives: Boolean) {
     Text(
-        text = "Nessuna offerta trovata. Prova un altro prodotto.",
+        text = if (hasAlternatives) {
+            "Nessun prezzo pubblico: considera le alternative locali qui sotto."
+        } else {
+            "Nessuna offerta trovata. Prova un altro prodotto."
+        },
         style = MaterialTheme.typography.bodyLarge,
     )
+}
+
+@Composable
+private fun LocalAlternativeCard(
+    store: NearbyStore,
+    onNavigate: () -> Unit,
+    onAddPrice: () -> Unit,
+) {
+    Card(onClick = onNavigate, modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            StoreFilterLogo(store.name, store.website)
+            Column(modifier = Modifier.padding(start = 10.dp).weight(1f)) {
+                Text(store.name, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(distanceLabel(store.distanceMeters), style = MaterialTheme.typography.bodySmall)
+                    if (store.sustainabilityScore > 0) {
+                        Icon(
+                            Icons.Rounded.Eco,
+                            contentDescription = "Foglia ${store.sustainabilityScore} su 100",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(start = 8.dp).size(16.dp),
+                        )
+                        Text(
+                            store.sustainabilityScore.toString(),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(start = 2.dp),
+                        )
+                    }
+                }
+                Text(
+                    store.sustainabilityReasons.firstOrNull() ?: "Prezzo non ancora disponibile",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+            }
+            IconButton(onClick = onAddPrice, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.Rounded.AddCircle, contentDescription = "Aggiungi prezzo per ${store.name}")
+            }
+            Icon(Icons.Rounded.Navigation, contentDescription = "Indicazioni per ${store.name}")
+        }
+    }
+}
+
+private fun openNavigation(context: android.content.Context, store: NearbyStore) {
+    val maps = Intent(
+        Intent.ACTION_VIEW,
+        Uri.parse("google.navigation:q=${store.latitude},${store.longitude}&mode=d"),
+    ).apply { setPackage("com.google.android.apps.maps") }
+    val fallback = Intent(
+        Intent.ACTION_VIEW,
+        Uri.parse("geo:${store.latitude},${store.longitude}?q=${store.latitude},${store.longitude}(${Uri.encode(store.name)})"),
+    )
+    try {
+        context.startActivity(if (maps.resolveActivity(context.packageManager) != null) maps else fallback)
+    } catch (_: ActivityNotFoundException) {
+        context.startActivity(
+            Intent(
+                Intent.ACTION_VIEW,
+                Uri.parse("https://www.google.com/maps/dir/?api=1&destination=${store.latitude},${store.longitude}"),
+            ),
+        )
+    }
 }
 
 @Composable
