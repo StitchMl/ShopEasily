@@ -40,6 +40,18 @@ class StoreDeduplicatorTest {
     }
 
     @Test
+    fun articlesAndPrepositionsNeverBecomeStoreFilters() {
+        StoreDeduplicator.learnFromNames(
+            listOf("Le Delizie", "Le Bontà", "La Dispensa", "La Bottega", "Da Mario", "Da Lucia"),
+        )
+        StoreDeduplicator.registerBrands(listOf(BrandRecord("Le Delizie", "Le")))
+
+        assertEquals("Le Delizie", StoreDeduplicator.brandDisplayName("Le Delizie"))
+        assertFalse(StoreDeduplicator.belongsToBrand("Le Delizie", "Le Bontà"))
+        assertFalse(StoreDeduplicator.belongsToBrand("Da Mario", "Da Lucia"))
+    }
+
+    @Test
     fun learnsBrandsFromShopNamesWithoutAnyList() {
         StoreDeduplicator.learnFromNames(
             listOf("Todis", "Todis Express", "Punto Todis", "Elite Supermercati", "Supermercato Elite", "Forno Neri", "Forno Verdi"),

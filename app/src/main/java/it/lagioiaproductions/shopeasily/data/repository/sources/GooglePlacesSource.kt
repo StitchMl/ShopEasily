@@ -46,16 +46,23 @@ class GooglePlacesSource(
      * shares a distinctive word is accepted, so namesakes elsewhere are never used.
      */
     fun findWebsite(name: String, latitude: Double, longitude: Double): String? {
+        return findPlace(name, latitude, longitude)?.website
+    }
+
+    /** Targeted identity lookup for a branch omitted by Nearby Search's result limit. */
+    fun findPlace(name: String, latitude: Double, longitude: Double): GooglePlace? {
         if (!isEnabled) return null
         val tokens = it.lagioiaproductions.shopeasily.data.repository.StoreDeduplicator.meaningfulTokens(name).toSet()
-        if (tokens.isEmpty()) return null
-        return text(name, latitude, longitude, 300.0)
+        val candidates = text(name, latitude, longitude, 300.0)
             .filter { place -> distanceMeters(latitude, longitude, place.latitude, place.longitude) <= 250.0 }
             .filterNot { NonShopSites.isPlatformName(it.name) }
-            .firstOrNull { place ->
+            .filter(::isFoodShop)
+        return candidates.firstOrNull { place ->
                 it.lagioiaproductions.shopeasily.data.repository.StoreDeduplicator.meaningfulTokens(place.name).any(tokens::contains)
             }
-            ?.website
+            // Complete rebrand: no shared word, accepted only at essentially the same pin.
+            ?: candidates.minByOrNull { distanceMeters(latitude, longitude, it.latitude, it.longitude) }
+                ?.takeIf { distanceMeters(latitude, longitude, it.latitude, it.longitude) <= 40.0 }
     }
 
     fun nearbyShops(latitude: Double, longitude: Double, radiusMeters: Int): List<GooglePlace> {

@@ -56,7 +56,9 @@ object StoreDeduplicator {
     private val genericWords = setOf(
         "alimentari", "alimentare", "supermercato", "supermercati", "minimarket", "market", "mini", "frutta", "verdura",
         "ortofrutta", "frutteria", "macelleria", "panificio", "panetteria", "forno", "mercato", "rionale", "coperto",
-        "salumeria", "pescheria", "drogheria", "latteria", "pasticceria", "gastronomia", "bio", "e", "di", "del", "la", "il",
+        "salumeria", "pescheria", "drogheria", "latteria", "pasticceria", "gastronomia", "bio", "e", "di", "del",
+        "la", "le", "lo", "il", "i", "gli", "un", "una", "al", "alla", "allo", "ai", "alle", "agli",
+        "da", "dal", "dalla", "dallo", "dai", "dalle", "dagli", "dei", "delle", "degli",
         "market", "food", "shop", "store", "discount", "emporio", "bottega", "negozio", "spesa",
         // Store-format prefixes: "Iper Triscount" is Triscount, not a brand called "Iper".
         "iper", "ipermercato", "super", "mini", "maxi", "mega", "extra", "hyper", "supermarket", "express",

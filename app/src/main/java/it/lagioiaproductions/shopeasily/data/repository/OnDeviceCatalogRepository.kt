@@ -27,6 +27,7 @@ import it.lagioiaproductions.shopeasily.BuildConfig
 import it.lagioiaproductions.shopeasily.data.repository.sources.EcommerceApiSource
 import it.lagioiaproductions.shopeasily.data.repository.sources.FarmerMarketSource
 import it.lagioiaproductions.shopeasily.data.repository.sources.GooglePlacesSource
+import it.lagioiaproductions.shopeasily.data.repository.sources.GooglePlace
 import it.lagioiaproductions.shopeasily.data.repository.sources.OpenPricesSource
 import it.lagioiaproductions.shopeasily.data.repository.sources.SourceProduct
 import it.lagioiaproductions.shopeasily.domain.ProductMatcher
@@ -624,12 +625,27 @@ class OnDeviceCatalogRepository(
         val preferences = appContext.getSharedPreferences("google_places_v3", Context.MODE_PRIVATE)
         val area = "${(latitude * 100).roundToInt()}|${(longitude * 100).roundToInt()}|$radius"
         val cachedAt = preferences.getLong(area, 0L)
-        val places = if (System.currentTimeMillis() - cachedAt < GOOGLE_REFRESH_MS) {
-            return result
+        val nearbyPlaces = if (System.currentTimeMillis() - cachedAt < GOOGLE_REFRESH_MS) {
+            emptyList()
         } else {
             runCatching { googlePlaces.nearbyShops(latitude, longitude, radius) }.getOrDefault(emptyList())
                 .also { if (it.isNotEmpty()) preferences.edit().putLong(area, System.currentTimeMillis()).apply() }
         }
+        // Nearby Search is capped in dense cities. If an already resolved official domain
+        // disagrees with the saved banner, verify that exact branch through Text Search.
+        val targeted = result.asSequence()
+            .filter(::officialDomainDisagreesWithName)
+            .filter { store ->
+                System.currentTimeMillis() - preferences.getLong("identity:${store.id}", 0L) >= GOOGLE_REFRESH_MS
+            }
+            .sortedBy(NearbyStore::distanceMeters)
+            .take(MAX_TARGETED_IDENTITY_LOOKUPS)
+            .mapNotNull { store ->
+                runCatching { googlePlaces.findPlace(store.name, store.latitude, store.longitude) }.getOrNull()
+                    .also { preferences.edit().putLong("identity:${store.id}", System.currentTimeMillis()).apply() }
+            }
+            .toList()
+        val places = (nearbyPlaces + targeted).distinctBy(GooglePlace::id)
         if (places.isEmpty()) return result
         places.filterNot { NonShopSites.isPlatformName(it.name) }.forEach { place ->
             val identity = StoreIdentityMatcher.match(result, place)
@@ -666,6 +682,13 @@ class OnDeviceCatalogRepository(
             }
         }
         return result
+    }
+
+    private fun officialDomainDisagreesWithName(store: NearbyStore): Boolean {
+        val website = store.website ?: return false
+        val hostTokens = StoreDeduplicator.meaningfulTokens(hostOf(website).replace('.', ' ')).toSet()
+        val nameTokens = StoreDeduplicator.meaningfulTokens(store.name).toSet()
+        return hostTokens.isNotEmpty() && nameTokens.isNotEmpty() && hostTokens.none(nameTokens::contains)
     }
 
     private fun discoverShops(latitude: Double, longitude: Double, radius: Int): List<NearbyStore> {
@@ -1238,6 +1261,7 @@ class OnDeviceCatalogRepository(
         const val USER_PRICE_TTL_MS = 60L * 24 * 60 * 60 * 1_000
         const val MAX_OVERPASS_BYTES = 16 * 1024 * 1024
         const val GOOGLE_REFRESH_MS = 3L * 24 * 60 * 60 * 1_000
+        const val MAX_TARGETED_IDENTITY_LOOKUPS = 12
         const val MAX_OFFERS_PER_STORE = 400
         const val MAX_DOCUMENTS_PER_STORE = 6
         const val MAX_SOURCE_PAGES_PER_STORE = 3
