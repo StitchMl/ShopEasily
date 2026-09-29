@@ -119,6 +119,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     private var lastRefreshAt: Long = 0L
     private var lastCatalogVersion: Long? = null
     @Volatile private var lastUnfiltered: List<Offer> = emptyList()
+    @Volatile private var offersByStoreKey: Map<String, List<Offer>> = emptyMap()
 
     /** Cached, ranked catalogue: re-read only when the database changes or filters change. */
     private var rankedCache: List<Offer> = emptyList()
@@ -280,11 +281,11 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         val base = lastUnfiltered
         userChangePending = true
         _uiState.update { state ->
+            val storeKey = storeName?.let(StoreDeduplicator::brandKey)
             state.copy(
                 selectedStore = storeName,
-                offers = if (storeName == null) base else base.filter {
-                    StoreDeduplicator.belongsToBrand(it.storeName, storeName)
-                },
+                // Pre-indexed during the background search: filtering is O(1) on the UI thread.
+                offers = if (storeKey == null) base else offersByStoreKey[storeKey].orEmpty(),
             )
         }
         search(silent = true)
@@ -357,8 +358,9 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 val displayable = results.filter { !showSelectedOnly || it.id in selectedIds }
                 lastUnfiltered = displayable
+                offersByStoreKey = displayable.groupBy { StoreDeduplicator.brandKey(it.storeName) }
                 // Only brands that actually have products in the current results appear in the filter.
-                val stores = displayable.groupBy { StoreDeduplicator.brandKey(it.storeName) }
+                val stores = offersByStoreKey
                     .filterValues { it.isNotEmpty() }
                     .values.map { offers -> StoreDeduplicator.brandDisplayName(offers.first().storeName) }
                     .distinct()

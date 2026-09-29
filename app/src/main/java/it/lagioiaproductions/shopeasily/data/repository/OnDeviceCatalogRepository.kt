@@ -330,13 +330,19 @@ class OnDeviceCatalogRepository(
         val sameArea = !lastLat.isNaN() && area.getInt("radius", -1) == radiusKm &&
             distanceMeters(lastLat, lastLon, latitude, longitude) < 1_000 &&
             now - area.getLong("at", 0L) < STORE_LIST_TTL_MS
-        val known = if (sameArea && !force) storedStores().filter { it.distanceMeters <= radiusKm * 1_000 } else emptyList()
+        val stored = storedStores()
+        val known = if (sameArea && !force) stored.filter { it.distanceMeters <= radiusKm * 1_000 } else emptyList()
         val discovered: List<NearbyStore> = if (known.isNotEmpty()) {
             // OSM geometry can be cached for a week, but branch identities cannot: banners
             // change and Google may already expose the new official name. Reconcile the
             // cached stores independently (the Places source has its own 3-day throttle).
-            runCatching { mergeGooglePlaces(known, latitude, longitude, radiusKm * 1_000) }
-                .getOrDefault(known)
+            // Also reconcile previously discovered branches whose official domain no
+            // longer agrees with the saved banner. They may sit just outside the current
+            // shopping radius but still be visible in the cached map.
+            val identityCandidates = (known + stored.filter(::officialDomainDisagreesWithName))
+                .distinctBy(NearbyStore::id)
+            runCatching { mergeGooglePlaces(identityCandidates, latitude, longitude, radiusKm * 1_000) }
+                .getOrDefault(identityCandidates)
         } else {
             runCatching { nearbyStores(latitude, longitude, radiusKm, includeGooglePlaces = true) }.getOrDefault(emptyList())
                 .also { stores ->
@@ -347,10 +353,13 @@ class OnDeviceCatalogRepository(
                 }
                 .map { store -> withBrandInfo(store, now) }
         }
-        val shops = discovered.ifEmpty { known }.ifEmpty {
+        val shops = discovered
+            .filter { it.distanceMeters <= radiusKm * 1_000 }
+            .ifEmpty { known }
+            .ifEmpty {
             // Overpass unavailable (rate limit/offline): keep working on the stores already known.
-            storedStores().filter { it.distanceMeters <= radiusKm * 1_000 }
-        }
+            stored.filter { it.distanceMeters <= radiusKm * 1_000 }
+            }
         if (discovered.isNotEmpty()) {
             // A website found earlier (Google Places, brand lookup) is kept when OSM has none.
             val previous = dao.stores().associateBy(StoreEntity::id)
@@ -616,6 +625,9 @@ class OnDeviceCatalogRepository(
             val saved = previous[store.id]
             store.copy(
                 name = saved?.name ?: store.name,
+                // A previously verified official branch page is stronger than a stale
+                // OSM website tag and is also the signal used to detect renamed banners.
+                website = saved?.website?.let(NonShopSites::shopWebsiteOrNull) ?: store.website,
                 reviewRating = saved?.reviewRating,
                 reviewCount = saved?.reviewCount ?: 0,
                 priceLevel = saved?.priceLevel,
@@ -633,16 +645,32 @@ class OnDeviceCatalogRepository(
         }
         // Nearby Search is capped in dense cities. If an already resolved official domain
         // disagrees with the saved banner, verify that exact branch through Text Search.
+        val hostSupport = result.groupingBy { store -> store.website?.let(::hostOf).orEmpty() }
+            .fold(0) { count, store ->
+                val hostTokens = store.website?.let(::hostOf)?.replace('.', ' ')
+                    ?.let(StoreDeduplicator::meaningfulTokens).orEmpty().toSet()
+                val nameTokens = StoreDeduplicator.meaningfulTokens(store.name).toSet()
+                count + if (hostTokens.any(nameTokens::contains)) 1 else 0
+            }
         val targeted = result.asSequence()
             .filter(::officialDomainDisagreesWithName)
             .filter { store ->
-                System.currentTimeMillis() - preferences.getLong("identity:${store.id}", 0L) >= GOOGLE_REFRESH_MS
+                System.currentTimeMillis() - preferences.getLong("identity-v2:${store.id}", 0L) >= GOOGLE_REFRESH_MS
             }
-            .sortedBy(NearbyStore::distanceMeters)
+            // A domain consistently used by many correctly named branches is strong
+            // evidence of a stale banner and takes precedence over mere proximity.
+            .sortedWith(
+                compareByDescending<NearbyStore> { store -> hostSupport[store.website?.let(::hostOf).orEmpty()] ?: 0 }
+                    .thenBy(NearbyStore::distanceMeters),
+            )
             .take(MAX_TARGETED_IDENTITY_LOOKUPS)
             .mapNotNull { store ->
                 runCatching { googlePlaces.findPlace(store.name, store.latitude, store.longitude) }.getOrNull()
-                    .also { preferences.edit().putLong("identity:${store.id}", System.currentTimeMillis()).apply() }
+                    ?.also {
+                        // A timeout or empty answer must remain retryable; throttle only
+                        // identities that were actually resolved and validated.
+                        preferences.edit().putLong("identity-v2:${store.id}", System.currentTimeMillis()).apply()
+                    }
             }
             .toList()
         val places = (nearbyPlaces + targeted).distinctBy(GooglePlace::id)
