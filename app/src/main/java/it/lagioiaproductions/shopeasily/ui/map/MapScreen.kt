@@ -161,8 +161,15 @@ fun MapScreen(modifier: Modifier = Modifier) {
         if (!locationGranted) return@LaunchedEffect
         isLoading = true
         runCatching {
-            LocationServices.getFusedLocationProviderClient(context)
-                .getCurrentLocation(Priority.PRIORITY_BALANCED_POWER_ACCURACY, null)
+            val client = LocationServices.getFusedLocationProviderClient(context)
+            // A cached fix makes the map useful immediately indoors. The fresh fix below
+            // replaces it as soon as Android can provide one.
+            client.lastLocation.addOnSuccessListener { location ->
+                if (location != null && userLocation == null) {
+                    userLocation = LatLng(location.latitude, location.longitude)
+                }
+            }
+            client.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
                 .addOnSuccessListener { location ->
                     if (location != null) userLocation = LatLng(location.latitude, location.longitude)
                     else isLoading = false
@@ -175,17 +182,29 @@ fun MapScreen(modifier: Modifier = Modifier) {
         val position = userLocation ?: return@LaunchedEffect
         val preferences = UserPreferencesRepository(context.applicationContext)
         val radius = runCatching { preferences.preferences.first().radiusKm }.getOrDefault(10)
-        isLoading = true
-        val refreshedStores = runCatching {
-            // Identity reconciliation is lightweight and independently throttled: use it
-            // even when OSM geometry is cached so renamed branches appear immediately.
-            repository.nearbyStores(position.latitude, position.longitude, radius, includeGooglePlaces = true)
+        val cached = runCatching {
+            repository.cachedStoresNear(position.latitude, position.longitude, radius)
         }.getOrDefault(emptyList())
-        if (refreshedStores.isNotEmpty()) stores = refreshedStores
+        if (cached.isNotEmpty()) stores = cached
         isLoading = false
-        // Offers are refreshed by the background worker: never crawl from the UI.
+        // Discovery and offers are refreshed by one background worker: the map itself
+        // never waits for Overpass, Places, PDF parsing or OCR.
         runCatching { preferences.setLastLocation(position.latitude, position.longitude) }
         CatalogSyncWorker.requestNow(context.applicationContext, position.latitude, position.longitude, force = refreshKey > 0)
+    }
+
+    // Room is the map cache. Each completed background batch is published without a
+    // spinner and recomputed against the current device position.
+    LaunchedEffect(userLocation) {
+        val position = userLocation ?: return@LaunchedEffect
+        val preferences = UserPreferencesRepository(context.applicationContext)
+        val radius = runCatching { preferences.preferences.first().radiusKm }.getOrDefault(10)
+        repository.observeCatalogVersion().collect {
+            val cached = runCatching {
+                repository.cachedStoresNear(position.latitude, position.longitude, radius)
+            }.getOrDefault(emptyList())
+            if (cached.isNotEmpty()) stores = cached
+        }
     }
 
     LaunchedEffect(userLocation, styleReady) {

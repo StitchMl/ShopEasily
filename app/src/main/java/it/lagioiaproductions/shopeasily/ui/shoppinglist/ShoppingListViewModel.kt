@@ -97,7 +97,7 @@ class ShoppingListViewModel(application: Application) : AndroidViewModel(applica
                 val legacyIds = preferences.manualCart.first().filterNot(CartEntry::isResolved).map(CartEntry::offerId)
                 if (legacyIds.isNotEmpty()) {
                     val resolved = liveCatalog.offersByIds(legacyIds).map {
-                        CartEntry(it.id, it.productName, it.storeName, it.price, it.promotional)
+                        CartEntry(it.id, it.productName, it.storeName, it.price, it.promotional, it.distanceMeters)
                     }
                     preferences.upgradeLegacyCartEntries(resolved)
                 }

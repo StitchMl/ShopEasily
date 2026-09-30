@@ -117,6 +117,13 @@ class OnDeviceCatalogRepository(
     suspend fun storedStores(): List<NearbyStore> =
         dao.stores().filterNot { NonShopSites.isPlatformName(it.name) }.also(::registerBrands).map { it.toNearbyStore() }
 
+    /** Instant location-aware view of Room data; never performs network I/O. */
+    suspend fun cachedStoresNear(latitude: Double, longitude: Double, radiusKm: Int): List<NearbyStore> =
+        storedStores().map { store ->
+            store.copy(distanceMeters = distanceMeters(latitude, longitude, store.latitude, store.longitude))
+        }.filter { it.distanceMeters <= radiusKm * 1_000 }
+            .sortedBy(NearbyStore::distanceMeters)
+
     private fun registerBrands(stores: List<StoreEntity>) {
         BrandDirectory.rememberWikidata(stores.mapNotNull { store -> store.brandWikidata?.let { store.name to it } }.toMap())
         StoreDeduplicator.learnFromNames(stores.map(StoreEntity::name), stores.mapNotNull(StoreEntity::place))

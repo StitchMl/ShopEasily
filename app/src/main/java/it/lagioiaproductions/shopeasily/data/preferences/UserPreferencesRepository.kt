@@ -46,11 +46,13 @@ data class CartEntry(
     val storeName: String,
     val price: Double,
     val promotional: Boolean,
+    /** Snapshot used for instant fuel/CO2 totals even while Room is still loading. */
+    val distanceMeters: Int = 0,
 ) {
     val isResolved: Boolean get() = name.isNotBlank()
 
     fun encode(): String = listOf(
-        offerId.toString(), name.clean(), storeName.clean(), price.toString(), promotional.toString(),
+        offerId.toString(), name.clean(), storeName.clean(), price.toString(), promotional.toString(), distanceMeters.toString(),
     ).joinToString(SEPARATOR)
 
     companion object {
@@ -59,13 +61,14 @@ data class CartEntry(
 
         fun decode(value: String): CartEntry? {
             val parts = value.split(SEPARATOR)
-            if (parts.size != 5) return null
+            if (parts.size !in 5..6) return null
             return CartEntry(
                 offerId = parts[0].toLongOrNull() ?: return null,
                 name = parts[1],
                 storeName = parts[2],
                 price = parts[3].toDoubleOrNull() ?: return null,
                 promotional = parts[4].toBoolean(),
+                distanceMeters = parts.getOrNull(5)?.toIntOrNull() ?: 0,
             )
         }
     }
