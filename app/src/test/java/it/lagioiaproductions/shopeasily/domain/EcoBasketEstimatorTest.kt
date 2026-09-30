@@ -49,4 +49,20 @@ class EcoBasketEstimatorTest {
         assertEquals(3.50, plan.productsTotal, 0.001)
         assertEquals(1, plan.lowConfidenceItems)
     }
+
+    @Test
+    fun emptyListStillCalculatesTripEmissionsAndQuality() {
+        val plan = EcoBasketEstimator.estimate(
+            requestedItems = emptyList(),
+            catalog = emptyList(),
+            stores = listOf(EcoStoreCandidate("market", "Mercato", 2_000, 80, observedQualityScore = 86)),
+            transport = TransportProfile(),
+        ).single()
+
+        assertEquals(0.0, plan.productsTotal, 0.001)
+        assertTrue(plan.travelCost > 0.0)
+        assertTrue(plan.emissionKg > 0.0)
+        assertEquals(86, plan.qualityScore)
+        assertTrue(plan.qualityFromReviews)
+    }
 }

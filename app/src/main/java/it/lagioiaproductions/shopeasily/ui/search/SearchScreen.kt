@@ -242,9 +242,9 @@ fun SearchScreen(
                     modifier = Modifier.padding(start = 8.dp),
                 )
                 Spacer(Modifier.weight(1f))
-                HeaderMetric(Icons.Rounded.ShoppingBasket, NumberFormat.getCurrencyInstance(Locale.ITALY).format(state.manualCartProductsTotal))
-                HeaderMetric(Icons.Rounded.LocalGasStation, NumberFormat.getCurrencyInstance(Locale.ITALY).format(state.manualCartFuelCost))
-                HeaderMetric(Icons.Rounded.Eco, "${(state.manualCartEmissionKg * 1_000).toInt()} g")
+                HeaderMetric(Icons.Rounded.ShoppingBasket, NumberFormat.getCurrencyInstance(Locale.ITALY).format(state.activeProductsTotal))
+                HeaderMetric(Icons.Rounded.LocalGasStation, NumberFormat.getCurrencyInstance(Locale.ITALY).format(state.activeTravelCost))
+                HeaderMetric(Icons.Rounded.Eco, compactEmission(state.activeEmissionKg))
             }
 
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -567,6 +567,14 @@ private fun HeaderMetric(icon: ImageVector, value: String) {
     }
 }
 
+/** Keeps the compact header readable without dropping the measurement unit. */
+private fun compactEmission(emissionKg: Double): String =
+    if (emissionKg < 1.0) {
+        "%.0f g".format(Locale.ITALY, emissionKg * 1_000)
+    } else {
+        "%.1f kg".format(Locale.ITALY, emissionKg)
+    }
+
 @Composable
 private fun HomeInsights(state: SearchUiState) {
     val money = NumberFormat.getCurrencyInstance(Locale.ITALY)
@@ -575,12 +583,12 @@ private fun HomeInsights(state: SearchUiState) {
         modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Insight(Icons.Rounded.ShoppingBasket, state.manualCartTotal.let(money::format), "Selezionati")
-        Insight(Icons.Rounded.LocalGasStation, state.manualCartFuelCost.let(money::format), "Carburante")
-        val emission = if (state.manualCartEmissionKg < 1.0) {
-            "%.0f g".format(Locale.ITALY, state.manualCartEmissionKg * 1_000)
+        Insight(Icons.Rounded.ShoppingBasket, state.activeCartTotal.let(money::format), "Selezionati")
+        Insight(Icons.Rounded.LocalGasStation, state.activeTravelCost.let(money::format), "Carburante")
+        val emission = if (state.activeEmissionKg < 1.0) {
+            "%.0f g".format(Locale.ITALY, state.activeEmissionKg * 1_000)
         } else {
-            "%.1f kg".format(Locale.ITALY, state.manualCartEmissionKg)
+            "%.1f kg".format(Locale.ITALY, state.activeEmissionKg)
         }
         Insight(Icons.Rounded.Eco, emission, "CO₂")
         Insight(Icons.Rounded.Check, "$coverage%", "Lista")
@@ -639,7 +647,7 @@ private fun LocalAlternativeCard(
     onAddPrice: () -> Unit,
 ) {
     Card(
-        onClick = onNavigate,
+        onClick = onSelect,
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
             containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
@@ -712,7 +720,9 @@ private fun LocalAlternativeCard(
             IconButton(onClick = onAddPrice, modifier = Modifier.size(40.dp)) {
                 Icon(Icons.Rounded.AddCircle, contentDescription = "Aggiungi prezzo per ${store.name}")
             }
-            Icon(Icons.Rounded.Navigation, contentDescription = "Indicazioni per ${store.name}")
+            IconButton(onClick = onNavigate, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.Rounded.Navigation, contentDescription = "Indicazioni per ${store.name}")
+            }
         }
     }
 }

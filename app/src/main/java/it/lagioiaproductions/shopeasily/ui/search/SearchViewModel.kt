@@ -38,6 +38,7 @@ import kotlin.math.cos
 import kotlin.math.pow
 import kotlin.math.sin
 import kotlin.math.sqrt
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
@@ -98,7 +99,25 @@ data class SearchUiState(
     val message: String? = null,
     /** Nearby markets and shops with no usable public price yet: never hidden from Home. */
     val localAlternatives: List<NearbyStore> = emptyList(),
-)
+) {
+    /**
+     * The compact Home totals follow the explicitly selected local shop.  The
+     * persisted/manual-cart metrics remain the fallback when no shop is active.
+     */
+    val activeProductsTotal: Double
+        get() = selectedEcoPlan?.productsTotal ?: manualCartProductsTotal
+    val activeTravelCost: Double
+        get() = selectedEcoPlan?.travelCost ?: manualCartFuelCost
+    val activeCartTotal: Double
+        get() = selectedEcoPlan?.total ?: manualCartTotal
+    val activeEmissionKg: Double
+        get() = selectedEcoPlan?.emissionKg ?: manualCartEmissionKg
+    val activeItemCount: Int
+        get() = selectedEcoPlan?.items?.size ?: manualCartItems
+
+    private val selectedEcoPlan: EcoBasketEstimate?
+        get() = selectedLocalStoreId?.let(ecoEstimatedPlans::get)
+}
 
 data class StoreOfferGroup(
     val key: String,
@@ -172,6 +191,13 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
             preferencesRepository.manualCartOfferIds.catch { }.collect { ids ->
                 _uiState.update { it.copy(selectedOfferIds = ids) }
                 refreshManualCartMetrics()
+            }
+        }
+        // The shopping list can be edited on another bottom-bar screen while this
+        // ViewModel stays alive. Recalculate estimates as soon as it changes.
+        viewModelScope.launch {
+            preferencesRepository.shoppingItems.catch { }.collect {
+                refreshCartSummary()
             }
         }
         viewModelScope.launch {
@@ -548,23 +574,13 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                     manualCartEmissionKg = manualMetrics.emissionKg,
                 )
             }
-            val summary = withContext(Dispatchers.Default) {
-                val allRanked = ranked(filters)
-                val candidates = allRanked.filter {
-                    selectedStore == null || StoreDeduplicator.belongsToBrand(it.storeName, selectedStore)
-                }
-                val matchedPrices = pendingItems.mapNotNull { requested ->
-                    candidates.filter { ProductMatcher.matches(it.productName, requested) }.minOfOrNull(Offer::price)
-                }
-                val catalog = catalogPrices()
-                val assessments = storesCache.associate { store ->
-                    store.id to StoreAssessmentEngine.assess(store, catalog)
-                }
-                val oneStop = BasketOptimizer.optimize(pendingItems, catalog, maximumStores = 1, transport = transport, goal = BasketGoal.CHEAPEST).firstOrNull()
-                val best = BasketOptimizer.optimize(pendingItems, catalog, transport = transport, goal = BasketGoal.CHEAPEST).firstOrNull()
-                val eco = BasketOptimizer.optimize(pendingItems, catalog, transport = transport, goal = BasketGoal.ECOLOGICAL).firstOrNull()
-                val ecoEstimates = EcoBasketEstimator.estimate(
-                    requestedItems = pendingItems,
+            val catalog = withContext(Dispatchers.Default) { catalogPrices() }
+            val requestedForEcoEstimate = (pendingItems + cart.mapNotNull { entry ->
+                entry.name.takeIf(String::isNotBlank)
+            }).distinctBy { it.lowercase(Locale.ROOT) }
+            val ecoEstimates = withContext(Dispatchers.Default) {
+                EcoBasketEstimator.estimate(
+                    requestedItems = requestedForEcoEstimate,
                     catalog = catalog,
                     stores = storesCache.map { store ->
                         EcoStoreCandidate(
@@ -572,7 +588,9 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                             name = store.name,
                             distanceMeters = store.distanceMeters,
                             greenScore = store.sustainabilityScore,
-                            observedQualityScore = assessments[store.id]?.qualityScore,
+                            observedQualityScore = store.reviewRating?.let { rating ->
+                                (rating / 5.0 * 100).roundToInt().coerceIn(0, 100)
+                            },
                             fairTrade = store.sustainabilityReasons.any { reason ->
                                 reason.contains("equo", ignoreCase = true) ||
                                     reason.contains("fair", ignoreCase = true) ||
@@ -582,6 +600,32 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                     },
                     transport = transport,
                 )
+            }
+            val ecoEstimatesByStore = ecoEstimates.associateBy(EcoBasketEstimate::storeId)
+            // Publish market estimates before the slower exact basket optimisation.
+            _uiState.update { state ->
+                state.copy(
+                    ecoEstimatedPlans = ecoEstimatesByStore,
+                    bestEcoEstimatedPlan = state.selectedLocalStoreId?.let(ecoEstimatesByStore::get)
+                        ?: ecoEstimates.firstOrNull(),
+                )
+            }
+            val summary = withContext(Dispatchers.Default) {
+                val allRanked = ranked(filters)
+                val candidates = allRanked.filter {
+                    selectedStore == null || StoreDeduplicator.belongsToBrand(it.storeName, selectedStore)
+                }
+                val matchedPrices = pendingItems.mapNotNull { requested ->
+                    candidates.filter { ProductMatcher.matches(it.productName, requested) }.minOfOrNull(Offer::price)
+                }
+                // Detailed price/quality assessment is quadratic in catalogue size;
+                // calculate it only for the local cards actually visible to the user.
+                val assessments = _uiState.value.localAlternatives.associate { store ->
+                    store.id to StoreAssessmentEngine.assess(store, catalog)
+                }
+                val oneStop = BasketOptimizer.optimize(pendingItems, catalog, maximumStores = 1, transport = transport, goal = BasketGoal.CHEAPEST).firstOrNull()
+                val best = BasketOptimizer.optimize(pendingItems, catalog, transport = transport, goal = BasketGoal.CHEAPEST).firstOrNull()
+                val eco = BasketOptimizer.optimize(pendingItems, catalog, transport = transport, goal = BasketGoal.ECOLOGICAL).firstOrNull()
                 CartSummary(
                     items = manualMetrics.items,
                     productsTotal = manualMetrics.productsTotal,
@@ -595,7 +639,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                     // CatalogPrice does not carry the verified store green score. In strict
                     // green mode do not present that unconstrained plan as an exact eco total.
                     eco = eco?.takeIf { !filters.sustainableOnly && it.missingItems.isEmpty() }?.monetaryTotal,
-                    ecoEstimates = ecoEstimates.associateBy(EcoBasketEstimate::storeId),
+                    ecoEstimates = ecoEstimatesByStore,
                     bestEcoEstimate = ecoEstimates.firstOrNull(),
                     assessments = assessments,
                 )

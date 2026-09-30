@@ -50,18 +50,19 @@ object EcoBasketEstimator {
     ): List<EcoBasketEstimate> {
         val requested = requestedItems.map(String::trim).filter(String::isNotBlank)
             .distinctBy { it.lowercase(Locale.ROOT) }
-        if (requested.isEmpty()) return emptyList()
+        // Product estimates are independent of the destination. Compute them once:
+        // doing the same catalogue scan for every market made the Home summary take minutes.
+        val estimatedItems = requested.map { item -> estimateItem(item, catalog) }
 
         val eligible = stores.filter { it.greenScore >= minimumGreenScore }
         return eligible.map { store ->
-            val items = requested.map { item -> estimateItem(item, catalog) }
             val roundTripKm = store.distanceMeters.coerceAtLeast(0) * 2.0 / 1_000.0
             EcoBasketEstimate(
                 storeId = store.id,
                 storeName = store.name,
                 greenScore = store.greenScore,
-                items = items,
-                productsTotal = items.sumOf(EcoItemEstimate::estimatedPrice),
+                items = estimatedItems,
+                productsTotal = estimatedItems.sumOf(EcoItemEstimate::estimatedPrice),
                 travelCost = roundTripKm * transport.costPerKm(),
                 emissionKg = roundTripKm * transport.emissionKgPerKm(),
                 qualityScore = store.observedQualityScore
