@@ -174,13 +174,25 @@ fun MapScreen(modifier: Modifier = Modifier) {
     }
 
     LaunchedEffect(searchArea) {
-        searchArea?.takeIf { it.manual }?.let { area ->
+        searchArea?.let { area ->
             userLocation = LatLng(area.latitude, area.longitude)
         }
     }
 
     LaunchedEffect(locationGranted, refreshKey, searchArea?.manual) {
-        if (!locationGranted || searchArea?.manual == true) return@LaunchedEffect
+        if (!locationGranted) return@LaunchedEffect
+        // Opening the map must be instant and must not wake the GPS every time.
+        // Reuse the persisted device fix; acquire a new one only on first use or
+        // after the user explicitly taps Refresh.
+        if (refreshKey == 0) {
+            val cached = runCatching { preferences.searchArea.first() }.getOrNull()
+            if (cached != null) {
+                userLocation = LatLng(cached.latitude, cached.longitude)
+                isLoading = false
+                return@LaunchedEffect
+            }
+        }
+        if (searchArea?.manual == true) return@LaunchedEffect
         isLoading = true
         runCatching {
             val client = LocationServices.getFusedLocationProviderClient(context)
