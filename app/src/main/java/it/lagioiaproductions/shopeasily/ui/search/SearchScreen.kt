@@ -13,6 +13,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -59,6 +60,7 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
@@ -88,6 +90,7 @@ import androidx.compose.material.icons.rounded.Eco
 import androidx.compose.material.icons.rounded.Elderly
 import androidx.compose.material.icons.rounded.Euro
 import androidx.compose.material.icons.rounded.Handyman
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.NearMe
 import androidx.compose.material.icons.rounded.Pets
 import androidx.compose.material.icons.rounded.Public
@@ -130,6 +133,7 @@ import it.lagioiaproductions.shopeasily.ui.common.StoreLogoResolver
 import java.text.NumberFormat
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @SuppressLint("MissingPermission")
@@ -143,6 +147,9 @@ fun SearchScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     val locationPreferences = remember { UserPreferencesRepository(context.applicationContext) }
     val searchArea by locationPreferences.searchArea.collectAsStateWithLifecycle(initialValue = null)
+    val homeHelpSeen by locationPreferences.homeHelpSeen.collectAsStateWithLifecycle(initialValue = null)
+    val coroutineScope = rememberCoroutineScope()
+    var helpTopic by remember { mutableStateOf<HomeHelpTopic?>(null) }
     var locationRefresh by remember { mutableStateOf(0) }
     var locationGranted by remember {
         mutableStateOf(
@@ -160,6 +167,20 @@ fun SearchScreen(
     val listState = rememberLazyListState()
     var showPriceDialog by remember { mutableStateOf(false) }
     var preferredReportStoreId by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(homeHelpSeen) {
+        if (homeHelpSeen == false && helpTopic == null) helpTopic = HomeHelpTopic.WELCOME
+    }
+    helpTopic?.let { topic ->
+        HomeHelpDialog(
+            topic = topic,
+            onDismiss = {
+                helpTopic = null
+                if (topic == HomeHelpTopic.WELCOME) {
+                    coroutineScope.launch { locationPreferences.markHomeHelpSeen() }
+                }
+            },
+        )
+    }
     if (showPriceDialog) {
         val reportStores by viewModel.reportStores.collectAsStateWithLifecycle()
         UserPriceDialog(
@@ -233,18 +254,26 @@ fun SearchScreen(
                 Image(
                     painter = painterResource(R.drawable.shopeasily_logo),
                     contentDescription = "Logo ShopEasily",
-                    modifier = Modifier.size(38.dp),
+                    modifier = Modifier.size(38.dp).clickable { helpTopic = HomeHelpTopic.WELCOME },
                 )
                 Text(
                     "ShopEasily",
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(start = 8.dp),
+                    modifier = Modifier.padding(start = 8.dp).clickable { helpTopic = HomeHelpTopic.WELCOME },
                 )
                 Spacer(Modifier.weight(1f))
-                HeaderMetric(Icons.Rounded.ShoppingBasket, NumberFormat.getCurrencyInstance(Locale.ITALY).format(state.activeProductsTotal))
-                HeaderMetric(Icons.Rounded.LocalGasStation, NumberFormat.getCurrencyInstance(Locale.ITALY).format(state.activeTravelCost))
-                HeaderMetric(Icons.Rounded.Eco, compactEmission(state.activeEmissionKg))
+                HeaderMetric(
+                    Icons.Rounded.ShoppingBasket,
+                    NumberFormat.getCurrencyInstance(Locale.ITALY).format(state.activeProductsTotal),
+                ) { helpTopic = HomeHelpTopic.PRODUCT_COST }
+                HeaderMetric(
+                    Icons.Rounded.LocalGasStation,
+                    NumberFormat.getCurrencyInstance(Locale.ITALY).format(state.activeTravelCost),
+                ) { helpTopic = HomeHelpTopic.TRAVEL_COST }
+                HeaderMetric(Icons.Rounded.Eco, compactEmission(state.activeEmissionKg)) {
+                    helpTopic = HomeHelpTopic.EMISSIONS
+                }
             }
 
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -306,24 +335,36 @@ fun SearchScreen(
                     Icon(Icons.Rounded.AddCircle, contentDescription = "Aggiungi un prezzo visto in negozio o al mercato")
                 }
                 Spacer(Modifier.weight(1f))
-                Text(
-                    text = NumberFormat.getCurrencyInstance(Locale.ITALY).format(state.shoppingTotal),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
-                    maxLines = 1,
-                    modifier = Modifier.semantics {
-                        contentDescription = "Totale stimato per ${state.matchedShoppingItems} di ${state.pendingShoppingItems} articoli della lista"
-                    },
-                )
-                CompactFilter(
-                    icon = Icons.Rounded.CreditCard,
-                    description = "Offerte delle mie carte fedeltà",
-                    selected = state.filters.includeLoyaltyOffers,
+                Surface(
                     onClick = {
-                        viewModel.setIncludeLoyaltyOffers(!state.filters.includeLoyaltyOffers)
+                        viewModel.selectSortMode(
+                            if (state.filters.sortMode == SortMode.PRICE) SortMode.SMART else SortMode.PRICE,
+                        )
                     },
-                )
+                    shape = MaterialTheme.shapes.small,
+                    color = if (state.filters.sortMode == SortMode.PRICE) {
+                        MaterialTheme.colorScheme.secondaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.surface
+                    },
+                    modifier = Modifier.semantics {
+                        contentDescription =
+                            if (state.filters.sortMode == SortMode.PRICE) {
+                                "Disattiva ordine per costo minimo. Totale stimato per ${state.matchedShoppingItems} di ${state.pendingShoppingItems} articoli della lista"
+                            } else {
+                                "Ordina per costo minimo. Totale stimato per ${state.matchedShoppingItems} di ${state.pendingShoppingItems} articoli della lista"
+                            }
+                    },
+                ) {
+                    Text(
+                        text = NumberFormat.getCurrencyInstance(Locale.ITALY).format(state.shoppingTotal),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                    )
+                }
             }
 
             state.selectedStore?.let { store ->
@@ -552,10 +593,14 @@ private fun UserPriceDialog(
 }
 
 @Composable
-private fun HeaderMetric(icon: ImageVector, value: String) {
+private fun HeaderMetric(icon: ImageVector, value: String, onClick: () -> Unit) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.padding(start = 7.dp),
+        modifier = Modifier
+            .padding(start = 3.dp)
+            .clip(MaterialTheme.shapes.small)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 4.dp, vertical = 5.dp),
     ) {
         Icon(icon, contentDescription = null, modifier = Modifier.size(15.dp))
         Text(
@@ -565,6 +610,36 @@ private fun HeaderMetric(icon: ImageVector, value: String) {
             modifier = Modifier.padding(start = 2.dp),
         )
     }
+}
+
+private enum class HomeHelpTopic(val title: String, val body: String) {
+    WELCOME(
+        "La Home in breve",
+        "Cerca un prodotto oppure usa la lista. Tocca il totale verde per ordinare dal prezzo più basso; la foglia privilegia sostenibilità e vicinanza. I mercati senza listino mostrano sempre una stima indicata da ~. Tocca logo e riepiloghi in alto per rileggere questi aiuti.",
+    ),
+    PRODUCT_COST(
+        "Costo prodotti",
+        "Somma i prodotti scelti. Se selezioni un mercato senza listino pubblico usa una stima prudente basata sui prezzi comparabili; il dettaglio la indica con ~.",
+    ),
+    TRAVEL_COST(
+        "Costo dello spostamento",
+        "Stima andata e ritorno usando distanza, mezzo, consumo e prezzo automatico del carburante configurati nell’app.",
+    ),
+    EMISSIONS(
+        "Impatto CO₂",
+        "Stima le emissioni dello spostamento. Sotto 1 kg usa i grammi; da 1 kg in su usa i chilogrammi per restare leggibile.",
+    ),
+}
+
+@Composable
+private fun HomeHelpDialog(topic: HomeHelpTopic, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Rounded.Info, contentDescription = null) },
+        title = { Text(topic.title) },
+        text = { Text(topic.body) },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Ho capito") } },
+    )
 }
 
 /** Keeps the compact header readable without dropping the measurement unit. */

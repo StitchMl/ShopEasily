@@ -104,6 +104,7 @@ class UserPreferencesRepository(private val context: Context) {
         val manualLatitude = stringPreferencesKey("manual_search_latitude")
         val manualLongitude = stringPreferencesKey("manual_search_longitude")
         val manualLocationLabel = stringPreferencesKey("manual_search_label")
+        val homeHelpSeen = booleanPreferencesKey("home_help_seen")
     }
 
     val preferences: Flow<UserPreferences> = context.shopEasilyDataStore.data.map { values ->
@@ -229,6 +230,14 @@ class UserPreferencesRepository(private val context: Context) {
             if (lat != null && lon != null) SearchArea(lat, lon, "Posizione dispositivo", false) else null
         }
     }.distinctUntilChanged()
+
+    val homeHelpSeen: Flow<Boolean> = context.shopEasilyDataStore.data
+        .map { values -> values[Keys.homeHelpSeen] ?: false }
+        .distinctUntilChanged()
+
+    suspend fun markHomeHelpSeen() = context.shopEasilyDataStore.edit {
+        it[Keys.homeHelpSeen] = true
+    }
 
     suspend fun setLastLocation(latitude: Double, longitude: Double) = context.shopEasilyDataStore.edit {
         it[Keys.lastLatitude] = latitude.toString()

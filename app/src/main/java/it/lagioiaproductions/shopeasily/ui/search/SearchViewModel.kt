@@ -125,6 +125,13 @@ data class StoreOfferGroup(
     val offers: List<Offer>,
 )
 
+/** Process-local snapshot: reopening the Activity never presents an empty Home first. */
+private object SearchSessionCache {
+    @Volatile var state: SearchUiState? = null
+    @Volatile var lastRefreshLocation: Pair<Double, Double>? = null
+    @Volatile var lastRefreshAt: Long = 0L
+}
+
 /**
  * Home screen state.
  *
@@ -138,18 +145,22 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     private val repository = OnDeviceCatalogRepository(application)
     private val preferencesRepository = UserPreferencesRepository(application)
     private val priceWatch = PriceWatchRepository(application)
-    private val _uiState = MutableStateFlow(SearchUiState())
+    private val restoredState = SearchSessionCache.state
+    private val _uiState = MutableStateFlow(
+        restoredState?.copy(isLoading = false, syncProgress = null, enriching = false, message = null)
+            ?: SearchUiState(),
+    )
     val uiState: StateFlow<SearchUiState> = _uiState.asStateFlow()
 
     private var searchJob: Job? = null
     private var summaryJob: Job? = null
     private var manualMetricsJob: Job? = null
+    private var shoppingSnapshotJob: Job? = null
     private var enrichJob: Job? = null
-    private var lastRefreshLocation: Pair<Double, Double>? = null
-    private var lastRefreshAt: Long = 0L
     private var lastCatalogVersion: Long? = null
     @Volatile private var lastUnfiltered: List<Offer> = emptyList()
     @Volatile private var offersByStoreKey: Map<String, List<Offer>> = emptyMap()
+    @Volatile private var latestManualCart: List<CartEntry> = emptyList()
 
     /** Cached, ranked catalogue: re-read only when the database changes or filters change. */
     private var rankedCache: List<Offer> = emptyList()
@@ -163,9 +174,12 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
 
     init {
         viewModelScope.launch {
+            uiState.collect { state -> SearchSessionCache.state = state }
+        }
+        viewModelScope.launch {
             val preferences = runCatching { preferencesRepository.preferences.first() }.getOrDefault(UserPreferences())
             _uiState.update { it.copy(filters = it.filters.copy(includeLoyaltyOffers = preferences.includeLoyaltyOffers)) }
-            search()
+            search(silent = restoredState != null)
         }
         // Silent refresh: when the background worker writes new prices, recompute
         // the list without spinners and without touching the query or scroll.
@@ -188,16 +202,21 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         // Selection comes only from the saved cart: background searches that started before
         // a tap can no longer overwrite it with an older snapshot (taps "lost").
         viewModelScope.launch {
-            preferencesRepository.manualCartOfferIds.catch { }.collect { ids ->
-                _uiState.update { it.copy(selectedOfferIds = ids) }
+            preferencesRepository.manualCart.catch { }.collect { cart ->
+                latestManualCart = cart
+                _uiState.update { it.copy(selectedOfferIds = cart.map(CartEntry::offerId).toSet()) }
                 refreshManualCartMetrics()
+                val shoppingItems = runCatching { preferencesRepository.shoppingItems.first() }.getOrDefault(emptyList())
+                publishShoppingListSnapshot(shoppingItems, cart)
+                refreshCartSummary(restart = true)
             }
         }
         // The shopping list can be edited on another bottom-bar screen while this
         // ViewModel stays alive. Recalculate estimates as soon as it changes.
         viewModelScope.launch {
-            preferencesRepository.shoppingItems.catch { }.collect {
-                refreshCartSummary()
+            preferencesRepository.shoppingItems.catch { }.collect { items ->
+                publishShoppingListSnapshot(items, latestManualCart)
+                refreshCartSummary(restart = true)
             }
         }
         viewModelScope.launch {
@@ -318,9 +337,6 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setSustainableOnly(enabled: Boolean) = updateFilters(_uiState.value.filters.copy(sustainableOnly = enabled))
 
-    fun setIncludeLoyaltyOffers(enabled: Boolean) =
-        updateFilters(_uiState.value.filters.copy(includeLoyaltyOffers = enabled))
-
     fun selectStore(storeName: String?) {
         // Filter/restore instantly from the unfiltered list, then refresh in background.
         val base = lastUnfiltered
@@ -372,11 +388,13 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     /** Stores the position and asks the background worker to refresh; never blocks the UI. */
     fun refreshForLocation(latitude: Double, longitude: Double, force: Boolean = false) {
         val now = System.currentTimeMillis()
-        val previous = lastRefreshLocation
+        val previous = SearchSessionCache.lastRefreshLocation
         val movedMeters = previous?.let { distanceMeters(it.first, it.second, latitude, longitude) }
-        if (!force && previous != null && movedMeters != null && movedMeters < 500 && now - lastRefreshAt < 15 * 60_000L) return
-        lastRefreshLocation = latitude to longitude
-        lastRefreshAt = now
+        if (!force && previous != null && movedMeters != null && movedMeters < 500 &&
+            now - SearchSessionCache.lastRefreshAt < 15 * 60_000L
+        ) return
+        SearchSessionCache.lastRefreshLocation = latitude to longitude
+        SearchSessionCache.lastRefreshAt = now
         viewModelScope.launch {
             runCatching { preferencesRepository.setLastLocation(latitude, longitude) }
             // lastLocation is delivered before the fresh GPS fix. If they differ,
@@ -519,6 +537,74 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     /** Totals, basket plans and price history: computed separately so they never delay the list. */
     private var pendingSummary = false
 
+    /**
+     * User edits must be reflected before the full optimiser finishes. This path only
+     * reads the in-memory ranked index, so deleting the final item immediately resets
+     * the Home total instead of waiting for database/history/route calculations.
+     */
+    private fun publishShoppingListSnapshot(
+        items: List<Pair<String, Boolean>>,
+        cart: List<CartEntry> = latestManualCart,
+    ) {
+        val listRequested = items.asSequence()
+            .filterNot { it.second }
+            .map { it.first.trim() }
+            .filter(String::isNotBlank)
+            .toList()
+        val requested = (listRequested + cart.mapNotNull { entry ->
+            entry.name.trim().takeIf(String::isNotBlank)
+        })
+            .distinctBy { it.lowercase(Locale.ROOT) }
+        _uiState.update { state ->
+            state.copy(
+                pendingShoppingItems = requested.size,
+                matchedShoppingItems = if (requested.isEmpty()) 0 else state.matchedShoppingItems.coerceAtMost(requested.size),
+                shoppingTotal = if (requested.isEmpty()) 0.0 else state.shoppingTotal,
+            )
+        }
+        shoppingSnapshotJob?.cancel()
+        shoppingSnapshotJob = viewModelScope.launch(Dispatchers.Default) {
+            val state = _uiState.value
+            val candidates = rankedCache.filter { offer ->
+                state.selectedStore == null || StoreDeduplicator.belongsToBrand(offer.storeName, state.selectedStore)
+            }
+            val savedPrices = cart.filter { it.price.isFinite() && it.price > 0.0 }
+                .associateBy({ it.name.trim().lowercase(Locale.ROOT) }, CartEntry::price)
+            val prices = requested.mapNotNull { product ->
+                candidates.asSequence()
+                    .filter { ProductMatcher.matches(it.productName, product) }
+                    .minOfOrNull(Offer::price)
+                    ?: savedPrices[product.lowercase(Locale.ROOT)]
+            }
+            _uiState.update {
+                it.copy(
+                    shoppingTotal = prices.sum(),
+                    matchedShoppingItems = prices.size,
+                    pendingShoppingItems = requested.size,
+                )
+            }
+            // Keep a selected local market in sync as well. This estimator scans the
+            // already cached catalogue once per item and is intentionally independent
+            // from the slower multi-store basket optimiser.
+            val preferences = runCatching { preferencesRepository.preferences.first() }
+                .getOrDefault(UserPreferences())
+            val estimates = EcoBasketEstimator.estimate(
+                requestedItems = requested,
+                catalog = catalogPricesCache.orEmpty(),
+                stores = storesCache.map(::ecoStoreCandidate),
+                transport = preferences.transportProfile(),
+            )
+            val estimatesByStore = estimates.associateBy(EcoBasketEstimate::storeId)
+            _uiState.update { current ->
+                current.copy(
+                    ecoEstimatedPlans = estimatesByStore,
+                    bestEcoEstimatedPlan = current.selectedLocalStoreId?.let(estimatesByStore::get)
+                        ?: estimates.firstOrNull(),
+                )
+            }
+        }
+    }
+
     /** Updates the three compact Home metrics without running basket optimisation. */
     private fun refreshManualCartMetrics() {
         manualMetricsJob?.cancel()
@@ -542,7 +628,11 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
      * Never cancels a running computation (continuous sync writes used to cancel it before
      * it could finish, so totals never appeared): a new request is merged and run after it.
      */
-    private fun refreshCartSummary() {
+    private fun refreshCartSummary(restart: Boolean = false) {
+        if (restart) {
+            pendingSummary = false
+            summaryJob?.cancel()
+        }
         if (summaryJob?.isActive == true) {
             pendingSummary = true
             return
@@ -553,15 +643,13 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
             val pendingItems = runCatching {
                 preferencesRepository.shoppingItems.first().filterNot { it.second }.map { it.first }
             }.getOrDefault(emptyList())
+            val requestedItems = (pendingItems + cart.mapNotNull { entry ->
+                entry.name.trim().takeIf(String::isNotBlank)
+            }).distinctBy { it.lowercase(Locale.ROOT) }
             val query = _uiState.value.query.trim()
             val selectedStore = _uiState.value.selectedStore
             val filters = _uiState.value.filters
-            val transport = TransportProfile(
-                vehicle = preferences.vehicleType,
-                fuel = preferences.fuelType,
-                consumptionPer100Km = preferences.consumptionPer100Km,
-                pricePerUnit = preferences.fuelPricePerUnit,
-            )
+            val transport = preferences.transportProfile()
             val manualMetrics = withContext(Dispatchers.Default) { calculateManualCartMetrics(cart, preferences) }
             // These values are the ones visible in the compact header: publish them
             // before the expensive multi-store optimisers and history calculations.
@@ -575,29 +663,12 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 )
             }
             val catalog = withContext(Dispatchers.Default) { catalogPrices() }
-            val requestedForEcoEstimate = (pendingItems + cart.mapNotNull { entry ->
-                entry.name.takeIf(String::isNotBlank)
-            }).distinctBy { it.lowercase(Locale.ROOT) }
+            val requestedForEcoEstimate = requestedItems
             val ecoEstimates = withContext(Dispatchers.Default) {
                 EcoBasketEstimator.estimate(
                     requestedItems = requestedForEcoEstimate,
                     catalog = catalog,
-                    stores = storesCache.map { store ->
-                        EcoStoreCandidate(
-                            id = store.id,
-                            name = store.name,
-                            distanceMeters = store.distanceMeters,
-                            greenScore = store.sustainabilityScore,
-                            observedQualityScore = store.reviewRating?.let { rating ->
-                                (rating / 5.0 * 100).roundToInt().coerceIn(0, 100)
-                            },
-                            fairTrade = store.sustainabilityReasons.any { reason ->
-                                reason.contains("equo", ignoreCase = true) ||
-                                    reason.contains("fair", ignoreCase = true) ||
-                                    reason.contains("solidale", ignoreCase = true)
-                            },
-                        )
-                    },
+                    stores = storesCache.map(::ecoStoreCandidate),
                     transport = transport,
                 )
             }
@@ -615,17 +686,22 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 val candidates = allRanked.filter {
                     selectedStore == null || StoreDeduplicator.belongsToBrand(it.storeName, selectedStore)
                 }
-                val matchedPrices = pendingItems.mapNotNull { requested ->
-                    candidates.filter { ProductMatcher.matches(it.productName, requested) }.minOfOrNull(Offer::price)
+                val savedPrices = cart.filter { it.price.isFinite() && it.price > 0.0 }
+                    .associateBy({ it.name.trim().lowercase(Locale.ROOT) }, CartEntry::price)
+                val matchedPrices = requestedItems.mapNotNull { requested ->
+                    candidates.asSequence()
+                        .filter { ProductMatcher.matches(it.productName, requested) }
+                        .minOfOrNull(Offer::price)
+                        ?: savedPrices[requested.trim().lowercase(Locale.ROOT)]
                 }
                 // Detailed price/quality assessment is quadratic in catalogue size;
                 // calculate it only for the local cards actually visible to the user.
                 val assessments = _uiState.value.localAlternatives.associate { store ->
                     store.id to StoreAssessmentEngine.assess(store, catalog)
                 }
-                val oneStop = BasketOptimizer.optimize(pendingItems, catalog, maximumStores = 1, transport = transport, goal = BasketGoal.CHEAPEST).firstOrNull()
-                val best = BasketOptimizer.optimize(pendingItems, catalog, transport = transport, goal = BasketGoal.CHEAPEST).firstOrNull()
-                val eco = BasketOptimizer.optimize(pendingItems, catalog, transport = transport, goal = BasketGoal.ECOLOGICAL).firstOrNull()
+                val oneStop = BasketOptimizer.optimize(requestedItems, catalog, maximumStores = 1, transport = transport, goal = BasketGoal.CHEAPEST).firstOrNull()
+                val best = BasketOptimizer.optimize(requestedItems, catalog, transport = transport, goal = BasketGoal.CHEAPEST).firstOrNull()
+                val eco = BasketOptimizer.optimize(requestedItems, catalog, transport = transport, goal = BasketGoal.ECOLOGICAL).firstOrNull()
                 CartSummary(
                     items = manualMetrics.items,
                     productsTotal = manualMetrics.productsTotal,
@@ -633,7 +709,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                     emissionKg = manualMetrics.emissionKg,
                     shoppingTotal = matchedPrices.sum(),
                     matched = matchedPrices.size,
-                    pending = pendingItems.size,
+                    pending = requestedItems.size,
                     oneStop = oneStop?.takeIf { it.missingItems.isEmpty() }?.monetaryTotal,
                     best = best?.takeIf { it.missingItems.isEmpty() }?.monetaryTotal,
                     // CatalogPrice does not carry the verified store green score. In strict
@@ -721,6 +797,28 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
             .also { catalogPricesCache = it }
     }
 
+    private fun UserPreferences.transportProfile() = TransportProfile(
+        vehicle = vehicleType,
+        fuel = fuelType,
+        consumptionPer100Km = consumptionPer100Km,
+        pricePerUnit = fuelPricePerUnit,
+    )
+
+    private fun ecoStoreCandidate(store: NearbyStore) = EcoStoreCandidate(
+        id = store.id,
+        name = store.name,
+        distanceMeters = store.distanceMeters,
+        greenScore = store.sustainabilityScore,
+        observedQualityScore = store.reviewRating?.let { rating ->
+            (rating / 5.0 * 100).roundToInt().coerceIn(0, 100)
+        },
+        fairTrade = store.sustainabilityReasons.any { reason ->
+            reason.contains("equo", ignoreCase = true) ||
+                reason.contains("fair", ignoreCase = true) ||
+                reason.contains("solidale", ignoreCase = true)
+        },
+    )
+
     private fun calculateManualCartMetrics(cart: List<CartEntry>, preferences: UserPreferences): ManualCartMetrics {
         val offersById = (catalogOffersCache ?: rankedCache).associateBy(Offer::id)
         val lines = cart.map { entry ->
@@ -733,12 +831,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                     ?: storeDistance(entry.storeName),
             )
         }
-        val transport = TransportProfile(
-            vehicle = preferences.vehicleType,
-            fuel = preferences.fuelType,
-            consumptionPer100Km = preferences.consumptionPer100Km,
-            pricePerUnit = preferences.fuelPricePerUnit,
-        )
+        val transport = preferences.transportProfile()
         val travelKm = lines.groupBy { StoreDeduplicator.brandKey(it.storeName) }.values.sumOf { storeLines ->
             (storeLines.maxOfOrNull(CartLine::distance) ?: 0) * 2.0 / 1_000.0
         }
