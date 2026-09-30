@@ -70,6 +70,7 @@ data class SearchUiState(
     /** Clearly-labelled projections for eligible green stores; never treated as observed prices. */
     val ecoEstimatedPlans: Map<String, EcoBasketEstimate> = emptyMap(),
     val bestEcoEstimatedPlan: EcoBasketEstimate? = null,
+    val selectedLocalStoreId: String? = null,
     val storeAssessments: Map<String, StoreAssessment> = emptyMap(),
     val nearbyOffers: Int = 0,
     val expiringToday: Int = 0,
@@ -302,6 +303,17 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         refreshCartSummary()
     }
 
+    fun selectLocalStore(storeId: String) {
+        _uiState.update { state ->
+            val selectedId = storeId.takeUnless { it == state.selectedLocalStoreId }
+            state.copy(
+                selectedLocalStoreId = selectedId,
+                bestEcoEstimatedPlan = selectedId?.let(state.ecoEstimatedPlans::get)
+                    ?: state.ecoEstimatedPlans.values.firstOrNull(),
+            )
+        }
+    }
+
     /** Clears the active store / "selected only" filter; returns true if something was cleared (Back). */
     fun clearFilters(): Boolean {
         val state = _uiState.value
@@ -515,6 +527,9 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                     candidates.filter { ProductMatcher.matches(it.productName, requested) }.minOfOrNull(Offer::price)
                 }
                 val catalog = catalogPrices()
+                val assessments = storesCache.associate { store ->
+                    store.id to StoreAssessmentEngine.assess(store, catalog)
+                }
                 val oneStop = BasketOptimizer.optimize(pendingItems, catalog, maximumStores = 1, transport = transport, goal = BasketGoal.CHEAPEST).firstOrNull()
                 val best = BasketOptimizer.optimize(pendingItems, catalog, transport = transport, goal = BasketGoal.CHEAPEST).firstOrNull()
                 val eco = BasketOptimizer.optimize(pendingItems, catalog, transport = transport, goal = BasketGoal.ECOLOGICAL).firstOrNull()
@@ -527,13 +542,11 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                             name = store.name,
                             distanceMeters = store.distanceMeters,
                             greenScore = store.sustainabilityScore,
+                            observedQualityScore = assessments[store.id]?.qualityScore,
                         )
                     },
                     transport = transport,
                 )
-                val assessments = storesCache.associate { store ->
-                    store.id to StoreAssessmentEngine.assess(store, catalog)
-                }
                 CartSummary(
                     items = manualMetrics.items,
                     productsTotal = manualMetrics.productsTotal,
@@ -584,7 +597,8 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                     bestBasketTotal = summary.best,
                     sustainableTotal = summary.eco,
                     ecoEstimatedPlans = summary.ecoEstimates,
-                    bestEcoEstimatedPlan = summary.bestEcoEstimate,
+                    bestEcoEstimatedPlan = state.selectedLocalStoreId?.let(summary.ecoEstimates::get)
+                        ?: summary.bestEcoEstimate,
                     storeAssessments = summary.assessments,
                     unavailableSources = history.unavailable,
                     priceDrops = history.drops ?: state.priceDrops,

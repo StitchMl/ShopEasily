@@ -28,17 +28,34 @@ class OfferRankingTest {
     }
 
     @Test
-    fun selectedSortRemainsPrimaryWithSustainableFilter() {
-        val similarlySustainable = listOf(
-            offer(id = 1, price = 3.0, distance = 300, sustainable = true),
-            offer(id = 2, price = 1.0, distance = 600, sustainable = true),
+    fun leafFilterPrioritizesLeafScoreBeforePrice() {
+        val sustainable = listOf(
+            offer(id = 1, price = 3.0, distance = 5_000, sustainable = true)
+                .copy(storeSustainabilityScore = 100),
+            offer(id = 2, price = 1.0, distance = 300, sustainable = true)
+                .copy(storeSustainabilityScore = 60),
         )
 
         val result = OfferRanking.apply(
-            similarlySustainable,
+            sustainable,
             SearchFilters(sortMode = SortMode.PRICE, sustainableOnly = true),
         )
 
+        assertEquals(listOf(1L, 2L), result.map(Offer::id))
+    }
+
+    @Test
+    fun equalLeafScoresPreferTheNearestStore() {
+        val sameLeafScore = listOf(
+            offer(id = 1, price = 1.0, distance = 2_000, sustainable = true)
+                .copy(storeSustainabilityScore = 69),
+            offer(id = 2, price = 3.0, distance = 300, sustainable = true)
+                .copy(storeSustainabilityScore = 60),
+        )
+
+        val result = OfferRanking.apply(sameLeafScore, SearchFilters(sustainableOnly = true))
+
+        assertEquals(result[0].sustainabilityScore(), result[1].sustainabilityScore())
         assertEquals(listOf(2L, 1L), result.map(Offer::id))
     }
 

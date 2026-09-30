@@ -2,12 +2,14 @@ package it.lagioiaproductions.shopeasily.domain
 
 import it.lagioiaproductions.shopeasily.data.model.CatalogPrice
 import java.util.Locale
+import kotlin.math.roundToInt
 
 data class EcoStoreCandidate(
     val id: String,
     val name: String,
     val distanceMeters: Int,
     val greenScore: Int,
+    val observedQualityScore: Int? = null,
 )
 
 data class EcoItemEstimate(
@@ -25,6 +27,8 @@ data class EcoBasketEstimate(
     val productsTotal: Double,
     val travelCost: Double,
     val emissionKg: Double,
+    val qualityScore: Int,
+    val qualityFromReviews: Boolean,
 ) {
     val total: Double = productsTotal + travelCost
     val lowConfidenceItems: Int = items.count { it.observations < 3 }
@@ -58,11 +62,14 @@ object EcoBasketEstimator {
                 productsTotal = items.sumOf(EcoItemEstimate::estimatedPrice),
                 travelCost = roundTripKm * transport.costPerKm(),
                 emissionKg = roundTripKm * transport.emissionKgPerKm(),
+                qualityScore = store.observedQualityScore
+                    ?: (45 + store.greenScore.coerceIn(0, 100) * 0.4).roundToInt().coerceIn(0, 100),
+                qualityFromReviews = store.observedQualityScore != null,
             )
         }.sortedWith(
-            compareBy<EcoBasketEstimate> { it.emissionKg }
-                .thenBy { it.total }
-                .thenByDescending { it.greenScore },
+            compareByDescending<EcoBasketEstimate> { it.greenScore }
+                .thenBy { it.emissionKg }
+                .thenBy { it.total },
         )
     }
 

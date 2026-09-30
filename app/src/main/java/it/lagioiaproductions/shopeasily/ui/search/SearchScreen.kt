@@ -416,6 +416,8 @@ fun SearchScreen(
                                 store = store,
                                 estimate = state.ecoEstimatedPlans[store.id],
                                 assessment = state.storeAssessments[store.id],
+                                selected = state.selectedLocalStoreId == store.id,
+                                onSelect = { viewModel.selectLocalStore(store.id) },
                                 onNavigate = { openNavigation(context, store) },
                                 onAddPrice = {
                                     preferredReportStoreId = store.id
@@ -600,10 +602,18 @@ private fun LocalAlternativeCard(
     store: NearbyStore,
     estimate: EcoBasketEstimate?,
     assessment: StoreAssessment?,
+    selected: Boolean,
+    onSelect: () -> Unit,
     onNavigate: () -> Unit,
     onAddPrice: () -> Unit,
 ) {
-    Card(onClick = onNavigate, modifier = Modifier.fillMaxWidth()) {
+    Card(
+        onClick = onNavigate,
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+        ),
+    ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -661,6 +671,13 @@ private fun LocalAlternativeCard(
                     )
                 }
             }
+            IconButton(onClick = onSelect, modifier = Modifier.size(40.dp)) {
+                Icon(
+                    if (selected) Icons.Rounded.CheckCircle else Icons.Rounded.Eco,
+                    contentDescription = if (selected) "Rimuovi ${store.name} dalla scelta eco" else "Scegli ${store.name} per la spesa eco",
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            }
             IconButton(onClick = onAddPrice, modifier = Modifier.size(40.dp)) {
                 Icon(Icons.Rounded.AddCircle, contentDescription = "Aggiungi prezzo per ${store.name}")
             }
@@ -693,9 +710,16 @@ private fun EcoEstimateCard(plan: EcoBasketEstimate) {
                 Text("~${money.format(plan.total)}", fontWeight = FontWeight.Bold)
             }
             Text(
-                "Prodotti ~${money.format(plan.productsTotal)} + viaggio ${money.format(plan.travelCost)} · $emissions · foglia ${plan.greenScore}",
+                "${plan.items.size} prodotti ~${money.format(plan.productsTotal)} + viaggio ${money.format(plan.travelCost)} · $emissions",
                 style = MaterialTheme.typography.labelSmall,
                 maxLines = 2,
+            )
+            Text(
+                "Foglia ${plan.greenScore}/100 · qualità ~${plan.qualityScore}/100" +
+                    if (plan.qualityFromReviews) " da recensioni" else " stimata",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.secondary,
+                maxLines = 1,
             )
             Text(
                 "Stima da mediane locali, non è un prezzo pubblicato dal negozio" +

@@ -45,6 +45,16 @@ object OfferRanking {
         } else {
             filtered
         }
+        if (filters.sustainableOnly) {
+            // Leaf mode is an ecological ranking, not only an eligibility switch:
+            // strongest evidence first, then the shortest trip to reduce transport
+            // emissions, then unit price only as the final tie-breaker.
+            return candidates.sortedWith(
+                compareByDescending<Offer>(Offer::sustainabilityScore)
+                    .thenBy(Offer::distanceMeters)
+                    .thenBy { it.unitPriceOrPrice() },
+            )
+        }
         return when (filters.sortMode) {
             SortMode.PRICE -> candidates.sortedWith(compareBy<Offer> { it.unitPriceOrPrice() }.thenBy(Offer::distanceMeters))
             SortMode.DISTANCE -> candidates.sortedWith(compareBy(Offer::distanceMeters).thenBy { it.unitPriceOrPrice() })
