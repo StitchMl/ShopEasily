@@ -43,6 +43,8 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.yield
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -175,6 +177,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     private var manualMetricsJob: Job? = null
     private var shoppingSnapshotJob: Job? = null
     private var instantFilterJob: Job? = null
+    private var rankingWarmupJob: Job? = null
     private var enrichJob: Job? = null
     private var lastCatalogVersion: Long? = null
     @Volatile private var lastUnfiltered: List<Offer> = emptyList()
@@ -189,10 +192,13 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     private var rankedKey: Any? = null
     private var catalogOffersCache: List<Offer>? = null
     private val rankingsCache = LinkedHashMap<SearchFilters, List<Offer>>()
+    @Volatile private var rankingsSnapshot: Map<SearchFilters, List<Offer>> = emptyMap()
+    @Volatile private var ambiguousImagesCache: Set<String>? = null
     private var catalogPricesCache: List<CatalogPrice>? = null
     private var storesCache: List<NearbyStore> = emptyList()
 
     private val cacheMutex = Mutex()
+    @Volatile private var searchRevision: Long = 0L
 
     init {
         viewModelScope.launch {
@@ -293,25 +299,51 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun toggleOfferSelection(offer: Offer) {
-        // Immediate feedback on the UI thread; persistence and totals follow.
+        val entry = CartEntry(
+            offer.id,
+            GeneralProductName.from(offer.productName, offer.storeName, offer.brand),
+            offer.storeName,
+            offer.price,
+            offer.promotional,
+            offer.distanceMeters,
+        )
+        val wasSelected = latestManualCart.any { it.offerId == offer.id }
+        val optimisticCart = if (wasSelected) {
+            latestManualCart.filterNot { it.offerId == offer.id }
+        } else {
+            latestManualCart + entry
+        }
+        latestManualCart = optimisticCart
+        val metrics = calculateSnapshotCartMetrics(optimisticCart, latestPreferences)
+        // Selection and every visible total change in the same UI frame.
         _uiState.update { state ->
-            val ids = state.selectedOfferIds
-            state.copy(selectedOfferIds = if (offer.id in ids) ids - offer.id else ids + offer.id)
+            state.copy(
+                selectedOfferIds = optimisticCart.map(CartEntry::offerId).toSet(),
+                manualCartItems = metrics.items,
+                manualCartProductsTotal = metrics.productsTotal,
+                manualCartFuelCost = metrics.fuelCost,
+                manualCartTotal = metrics.productsTotal + metrics.fuelCost,
+                manualCartEmissionKg = metrics.emissionKg,
+            )
         }
         viewModelScope.launch {
             runCatching {
-                preferencesRepository.toggleManualCartOffer(
-                    CartEntry(
-                        offer.id,
-                        GeneralProductName.from(offer.productName, offer.storeName, offer.brand),
-                        offer.storeName,
-                        offer.price,
-                        offer.promotional,
-                        offer.distanceMeters,
-                    ),
-                )
+                preferencesRepository.toggleManualCartOffer(entry)
             }.onFailure { error ->
-                _uiState.update { it.copy(message = "Selezione non salvata: ${error.localizedMessage ?: "errore"}") }
+                val rollback = if (wasSelected) latestManualCart + entry else latestManualCart.filterNot { it.offerId == offer.id }
+                latestManualCart = rollback
+                val rollbackMetrics = calculateSnapshotCartMetrics(rollback, latestPreferences)
+                _uiState.update {
+                    it.copy(
+                        selectedOfferIds = rollback.map(CartEntry::offerId).toSet(),
+                        manualCartItems = rollbackMetrics.items,
+                        manualCartProductsTotal = rollbackMetrics.productsTotal,
+                        manualCartFuelCost = rollbackMetrics.fuelCost,
+                        manualCartTotal = rollbackMetrics.productsTotal + rollbackMetrics.fuelCost,
+                        manualCartEmissionKg = rollbackMetrics.emissionKg,
+                        message = "Selezione non salvata: ${error.localizedMessage ?: "errore"}",
+                    )
+                }
             }
             if (_uiState.value.showSelectedOnly) search(silent = true)
         }
@@ -324,11 +356,37 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun clearManualCart() {
+        val previous = latestManualCart
+        latestManualCart = emptyList()
+        _uiState.update {
+            it.copy(
+                showSelectedOnly = false,
+                selectedOfferIds = emptySet(),
+                manualCartItems = 0,
+                manualCartProductsTotal = 0.0,
+                manualCartFuelCost = 0.0,
+                manualCartTotal = 0.0,
+                manualCartEmissionKg = 0.0,
+            )
+        }
         viewModelScope.launch {
-            preferencesRepository.clearManualCart()
-            _uiState.update { it.copy(showSelectedOnly = false, selectedOfferIds = emptySet()) }
-            refreshManualCartMetrics()
-            search(silent = true)
+            runCatching { preferencesRepository.clearManualCart() }
+                .onSuccess { search(silent = true) }
+                .onFailure { error ->
+                    latestManualCart = previous
+                    val metrics = calculateSnapshotCartMetrics(previous, latestPreferences)
+                    _uiState.update {
+                        it.copy(
+                            selectedOfferIds = previous.map(CartEntry::offerId).toSet(),
+                            manualCartItems = metrics.items,
+                            manualCartProductsTotal = metrics.productsTotal,
+                            manualCartFuelCost = metrics.fuelCost,
+                            manualCartTotal = metrics.productsTotal + metrics.fuelCost,
+                            manualCartEmissionKg = metrics.emissionKg,
+                            message = "Impossibile svuotare la selezione: ${error.localizedMessage ?: "errore"}",
+                        )
+                    }
+                }
         }
     }
 
@@ -463,7 +521,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 latestManualCart.map { GeneralProductName.from(it.name, it.storeName) }
             ).filter(String::isNotBlank).distinctBy { ProductMatcher.key(it) }
         instantFilterJob = viewModelScope.launch(Dispatchers.Default) {
-            val ranked = OfferRanking.apply(source, filters)
+            val ranked = rankingsSnapshot[filters] ?: OfferRanking.apply(source, filters)
             val queried = if (query.isBlank() || (filters.sortMode == SortMode.PRICE && requested.isNotEmpty())) {
                 ranked
             } else {
@@ -503,6 +561,9 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         rankedKey = null
         catalogOffersCache = null
         rankingsCache.clear()
+        rankingsSnapshot = emptyMap()
+        ambiguousImagesCache = null
+        rankingWarmupJob?.cancel()
         catalogPricesCache = null
         storesCache = emptyList()
     }
@@ -520,6 +581,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
         searchJob?.cancel()
+        val revision = ++searchRevision
         searchJob = viewModelScope.launch {
             if (!silent && _uiState.value.offers.isEmpty()) _uiState.update { it.copy(isLoading = true) }
             val query = _uiState.value.query.trim()
@@ -590,10 +652,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                     },
                     nearby = allRanked.count { it.distanceMeters <= 2_000 },
                     expiringToday = allRanked.count { it.validUntil == today },
-                    ambiguousImages = allRanked.asSequence().filter { !it.productImageUrl.isNullOrBlank() }
-                        .groupBy { it.productImageUrl!! }
-                        .filterValues { offers -> offers.map { it.productName.lowercase(Locale.ROOT) }.distinct().size > 1 }
-                        .keys,
+                    ambiguousImages = ambiguousImages(allRanked),
                     localAlternatives = storesCache.asSequence()
                         .filter { store ->
                             allRanked.none { offer -> offer.storeName.equals(store.name, ignoreCase = true) }
@@ -619,6 +678,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                     minimumMetrics = minimumMetrics,
                 )
             }
+            if (revision != searchRevision) return@launch
             _uiState.update { state ->
                 state.copy(
                     offers = result.offers,
@@ -639,6 +699,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 )
             }
             userChangePending = false
+            warmRankingVariants(filters)
             refreshCartSummary()
             if (pendingSilentRefresh) {
                 pendingSilentRefresh = false
@@ -903,8 +964,44 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         while (rankingsCache.size > MAX_RANKING_VARIANTS) {
             rankingsCache.remove(rankingsCache.keys.first())
         }
+        rankingsSnapshot = rankingsCache.toMap()
         rankedCache
     }
+
+    private fun warmRankingVariants(base: SearchFilters) {
+        val source = catalogOffersCache ?: return
+        rankingWarmupJob?.cancel()
+        rankingWarmupJob = viewModelScope.launch(Dispatchers.Default) {
+            // Let the current frame and first cards render before using background CPU.
+            delay(150)
+            val variants = SortMode.entries.flatMap { mode ->
+                listOf(
+                    base.copy(sortMode = mode, sustainableOnly = false),
+                    base.copy(sortMode = mode, sustainableOnly = true),
+                )
+            }.distinct()
+            variants.forEach { filters ->
+                if (rankingsSnapshot[filters] == null) {
+                    val ranked = OfferRanking.apply(source, filters)
+                    cacheMutex.withLock {
+                        rankingsCache[filters] = ranked
+                        while (rankingsCache.size > MAX_RANKING_VARIANTS) {
+                            rankingsCache.remove(rankingsCache.keys.first())
+                        }
+                        rankingsSnapshot = rankingsCache.toMap()
+                    }
+                }
+                yield()
+            }
+        }
+    }
+
+    private fun ambiguousImages(offers: List<Offer>): Set<String> = ambiguousImagesCache ?: offers.asSequence()
+        .filter { !it.productImageUrl.isNullOrBlank() }
+        .groupBy { it.productImageUrl!! }
+        .filterValues { matches -> matches.map { it.productName.lowercase(Locale.ROOT) }.distinct().size > 1 }
+        .keys
+        .also { ambiguousImagesCache = it }
 
     private suspend fun catalogPrices(): List<CatalogPrice> = cacheMutex.withLock {
         catalogPricesCache ?: runCatching { repository.catalogPrices() }.getOrDefault(emptyList())
@@ -952,6 +1049,20 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         return ManualCartMetrics(
             items = cart.size,
             productsTotal = lines.sumOf(CartLine::price),
+            fuelCost = travelKm * transport.costPerKm(),
+            emissionKg = travelKm * transport.emissionKgPerKm(),
+        )
+    }
+
+    private fun calculateSnapshotCartMetrics(cart: List<CartEntry>, preferences: UserPreferences): ManualCartMetrics {
+        val transport = preferences.transportProfile()
+        val resolved = cart.filter(CartEntry::isResolved)
+        val travelKm = resolved.groupBy { StoreDeduplicator.brandKey(it.storeName) }.values.sumOf { entries ->
+            (entries.maxOfOrNull(CartEntry::distanceMeters) ?: 0) * 2.0 / 1_000.0
+        }
+        return ManualCartMetrics(
+            items = cart.size,
+            productsTotal = resolved.sumOf { it.price.takeUnless(Double::isNaN) ?: 0.0 },
             fuelCost = travelKm * transport.costPerKm(),
             emissionKg = travelKm * transport.emissionKgPerKm(),
         )
