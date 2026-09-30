@@ -40,6 +40,13 @@ data class UserPreferences(
     val vehicleModelLabel: String? = null,
 )
 
+data class SearchArea(
+    val latitude: Double,
+    val longitude: Double,
+    val label: String,
+    val manual: Boolean,
+)
+
 data class CartEntry(
     val offerId: Long,
     val name: String,
@@ -94,6 +101,9 @@ class UserPreferencesRepository(private val context: Context) {
         val manualCartEntries = stringSetPreferencesKey("manual_cart_entries")
         val lastLatitude = stringPreferencesKey("last_latitude")
         val lastLongitude = stringPreferencesKey("last_longitude")
+        val manualLatitude = stringPreferencesKey("manual_search_latitude")
+        val manualLongitude = stringPreferencesKey("manual_search_longitude")
+        val manualLocationLabel = stringPreferencesKey("manual_search_label")
     }
 
     val preferences: Flow<UserPreferences> = context.shopEasilyDataStore.data.map { values ->
@@ -208,9 +218,34 @@ class UserPreferencesRepository(private val context: Context) {
         if (lat != null && lon != null) lat to lon else null
     }.distinctUntilChanged()
 
+    val searchArea: Flow<SearchArea?> = context.shopEasilyDataStore.data.map { values ->
+        val manualLat = values[Keys.manualLatitude]?.toDoubleOrNull()
+        val manualLon = values[Keys.manualLongitude]?.toDoubleOrNull()
+        if (manualLat != null && manualLon != null) {
+            SearchArea(manualLat, manualLon, values[Keys.manualLocationLabel] ?: "Posizione scelta", true)
+        } else {
+            val lat = values[Keys.lastLatitude]?.toDoubleOrNull()
+            val lon = values[Keys.lastLongitude]?.toDoubleOrNull()
+            if (lat != null && lon != null) SearchArea(lat, lon, "Posizione dispositivo", false) else null
+        }
+    }.distinctUntilChanged()
+
     suspend fun setLastLocation(latitude: Double, longitude: Double) = context.shopEasilyDataStore.edit {
         it[Keys.lastLatitude] = latitude.toString()
         it[Keys.lastLongitude] = longitude.toString()
+    }
+
+    suspend fun setManualSearchArea(latitude: Double, longitude: Double, label: String) =
+        context.shopEasilyDataStore.edit {
+            it[Keys.manualLatitude] = latitude.toString()
+            it[Keys.manualLongitude] = longitude.toString()
+            it[Keys.manualLocationLabel] = label.trim().ifEmpty { "Posizione scelta" }
+        }
+
+    suspend fun useDeviceLocation() = context.shopEasilyDataStore.edit {
+        it.remove(Keys.manualLatitude)
+        it.remove(Keys.manualLongitude)
+        it.remove(Keys.manualLocationLabel)
     }
 
     suspend fun setLoyaltyCard(shopName: String, owned: Boolean) = context.shopEasilyDataStore.edit { values ->

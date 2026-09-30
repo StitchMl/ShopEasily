@@ -312,11 +312,11 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /** Stores the position and asks the background worker to refresh; never blocks the UI. */
-    fun refreshForLocation(latitude: Double, longitude: Double) {
+    fun refreshForLocation(latitude: Double, longitude: Double, force: Boolean = false) {
         val now = System.currentTimeMillis()
         val previous = lastRefreshLocation
         val movedMeters = previous?.let { distanceMeters(it.first, it.second, latitude, longitude) }
-        if (previous != null && movedMeters != null && movedMeters < 500 && now - lastRefreshAt < 15 * 60_000L) return
+        if (!force && previous != null && movedMeters != null && movedMeters < 500 && now - lastRefreshAt < 15 * 60_000L) return
         lastRefreshLocation = latitude to longitude
         lastRefreshAt = now
         viewModelScope.launch {
@@ -327,7 +327,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 getApplication(),
                 latitude,
                 longitude,
-                force = movedMeters != null && movedMeters >= 500,
+                force = force || (movedMeters != null && movedMeters >= 500),
             )
         }
     }

@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.ActivityNotFoundException
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.location.Geocoder
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -27,15 +28,19 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Eco
 import androidx.compose.material.icons.rounded.MyLocation
 import androidx.compose.material.icons.rounded.Navigation
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -43,6 +48,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -64,9 +70,11 @@ import it.lagioiaproductions.shopeasily.sync.CatalogSyncWorker
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.sync.Semaphore
@@ -93,12 +101,16 @@ import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.geojson.Feature
 import org.maplibre.geojson.FeatureCollection
 import org.maplibre.geojson.Point
+import java.util.Locale
 
 @SuppressLint("MissingPermission")
 @Composable
 fun MapScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val repository = remember { OnDeviceCatalogRepository(context.applicationContext) }
+    val preferences = remember { UserPreferencesRepository(context.applicationContext) }
+    val searchArea by preferences.searchArea.collectAsStateWithLifecycle(initialValue = null)
+    val scope = rememberCoroutineScope()
     val lifecycleOwner = LocalLifecycleOwner.current
     var locationGranted by remember {
         mutableStateOf(
@@ -114,6 +126,10 @@ fun MapScreen(modifier: Modifier = Modifier) {
     var refreshKey by remember { mutableStateOf(0) }
     var mapInstance by remember { mutableStateOf<MapLibreMap?>(null) }
     var styleReady by remember { mutableStateOf(false) }
+    var showLocationDialog by remember { mutableStateOf(false) }
+    var locationQuery by remember { mutableStateOf("") }
+    var locationError by remember { mutableStateOf<String?>(null) }
+    var resolvingLocation by remember { mutableStateOf(false) }
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { permissions ->
@@ -157,8 +173,14 @@ fun MapScreen(modifier: Modifier = Modifier) {
         if (stores.isEmpty() && known.isNotEmpty()) stores = known
     }
 
-    LaunchedEffect(locationGranted, refreshKey) {
-        if (!locationGranted) return@LaunchedEffect
+    LaunchedEffect(searchArea) {
+        searchArea?.takeIf { it.manual }?.let { area ->
+            userLocation = LatLng(area.latitude, area.longitude)
+        }
+    }
+
+    LaunchedEffect(locationGranted, refreshKey, searchArea?.manual) {
+        if (!locationGranted || searchArea?.manual == true) return@LaunchedEffect
         isLoading = true
         runCatching {
             val client = LocationServices.getFusedLocationProviderClient(context)
@@ -180,7 +202,6 @@ fun MapScreen(modifier: Modifier = Modifier) {
 
     LaunchedEffect(userLocation, refreshKey) {
         val position = userLocation ?: return@LaunchedEffect
-        val preferences = UserPreferencesRepository(context.applicationContext)
         val radius = runCatching { preferences.preferences.first().radiusKm }.getOrDefault(10)
         val cached = runCatching {
             repository.cachedStoresNear(position.latitude, position.longitude, radius)
@@ -189,7 +210,9 @@ fun MapScreen(modifier: Modifier = Modifier) {
         isLoading = false
         // Discovery and offers are refreshed by one background worker: the map itself
         // never waits for Overpass, Places, PDF parsing or OCR.
-        runCatching { preferences.setLastLocation(position.latitude, position.longitude) }
+        if (searchArea?.manual != true) {
+            runCatching { preferences.setLastLocation(position.latitude, position.longitude) }
+        }
         CatalogSyncWorker.requestNow(context.applicationContext, position.latitude, position.longitude, force = refreshKey > 0)
     }
 
@@ -197,7 +220,6 @@ fun MapScreen(modifier: Modifier = Modifier) {
     // spinner and recomputed against the current device position.
     LaunchedEffect(userLocation) {
         val position = userLocation ?: return@LaunchedEffect
-        val preferences = UserPreferencesRepository(context.applicationContext)
         val radius = runCatching { preferences.preferences.first().radiusKm }.getOrDefault(10)
         repository.observeCatalogVersion().collect {
             val cached = runCatching {
@@ -291,31 +313,93 @@ fun MapScreen(modifier: Modifier = Modifier) {
         onDispose { map.removeOnMapClickListener(listener) }
     }
 
+    if (showLocationDialog) {
+        AlertDialog(
+            onDismissRequest = { if (!resolvingLocation) showLocationDialog = false },
+            title = { Text("Zona di ricerca") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Inserisci città, CAP o indirizzo")
+                    OutlinedTextField(
+                        value = locationQuery,
+                        onValueChange = { locationQuery = it; locationError = null },
+                        singleLine = true,
+                        placeholder = { Text("Es. Roma EUR") },
+                    )
+                    locationError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    if (searchArea?.manual == true) {
+                        TextButton(
+                            onClick = {
+                                scope.launch {
+                                    preferences.useDeviceLocation()
+                                    userLocation = null
+                                    showLocationDialog = false
+                                    refreshKey++
+                                }
+                            },
+                        ) { Text("Usa posizione dispositivo") }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = locationQuery.isNotBlank() && !resolvingLocation,
+                    onClick = {
+                        resolvingLocation = true
+                        locationError = null
+                        scope.launch {
+                            val result = geocode(context, locationQuery)
+                            resolvingLocation = false
+                            if (result == null) {
+                                locationError = "Località non trovata"
+                            } else {
+                                preferences.setManualSearchArea(result.first, result.second, locationQuery)
+                                userLocation = LatLng(result.first, result.second)
+                                showLocationDialog = false
+                                refreshKey++
+                            }
+                        }
+                    },
+                ) { Text(if (resolvingLocation) "Cerco…" else "Usa questa zona") }
+            },
+            dismissButton = { TextButton(onClick = { showLocationDialog = false }) { Text("Annulla") } },
+        )
+    }
+
     Column(modifier = modifier.fillMaxSize()) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text("Vicino a te", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text(
+                    searchArea?.takeIf { it.manual }?.label ?: "Vicino a te",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
                 Text(
                     if (stores.isEmpty()) "Negozi e mercati nel tuo raggio" else "${stores.size} punti vendita trovati",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            IconButton(onClick = { showLocationDialog = true }) {
+                Icon(Icons.Rounded.Search, contentDescription = "Scegli zona di ricerca")
+            }
             Box(modifier = Modifier.size(48.dp), contentAlignment = Alignment.Center) {
                 if (isLoading) {
                     CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 3.dp)
                 } else {
-                    IconButton(onClick = { refreshKey++ }, enabled = locationGranted) {
+                    IconButton(onClick = { refreshKey++ }, enabled = locationGranted || searchArea?.manual == true) {
                         Icon(Icons.Rounded.Refresh, contentDescription = "Aggiorna negozi e offerte")
                     }
                 }
             }
         }
 
-        if (!locationGranted) {
+        if (!locationGranted && searchArea?.manual != true) {
             LocationPermissionCard {
                 permissionLauncher.launch(
                     arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
@@ -363,6 +447,16 @@ internal fun closestStoreToTap(
         val latitudeDelta = store.latitude - latitude
         val longitudeDelta = (store.longitude - longitude) * kotlin.math.cos(Math.toRadians(latitude))
         latitudeDelta * latitudeDelta + longitudeDelta * longitudeDelta
+    }
+
+@Suppress("DEPRECATION")
+private suspend fun geocode(context: android.content.Context, query: String): Pair<Double, Double>? =
+    withContext(Dispatchers.IO) {
+        runCatching {
+            Geocoder(context, Locale.ITALY).getFromLocationName(query.trim(), 1)
+                ?.firstOrNull()
+                ?.let { it.latitude to it.longitude }
+        }.getOrNull()
     }
 
 private fun openNavigation(context: android.content.Context, store: NearbyStore) {

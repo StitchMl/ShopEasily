@@ -115,6 +115,7 @@ import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import it.lagioiaproductions.shopeasily.R
 import it.lagioiaproductions.shopeasily.data.model.Offer
+import it.lagioiaproductions.shopeasily.data.preferences.UserPreferencesRepository
 import it.lagioiaproductions.shopeasily.data.repository.NearbyStore
 import it.lagioiaproductions.shopeasily.data.model.ProductImageKey
 import it.lagioiaproductions.shopeasily.domain.SortMode
@@ -140,6 +141,8 @@ fun SearchScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val locationPreferences = remember { UserPreferencesRepository(context.applicationContext) }
+    val searchArea by locationPreferences.searchArea.collectAsStateWithLifecycle(initialValue = null)
     var locationRefresh by remember { mutableStateOf(0) }
     var locationGranted by remember {
         mutableStateOf(
@@ -199,8 +202,8 @@ fun SearchScreen(
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
-    LaunchedEffect(locationGranted, locationRefresh) {
-        if (!locationGranted) return@LaunchedEffect
+    LaunchedEffect(locationGranted, locationRefresh, searchArea?.manual) {
+        if (!locationGranted || searchArea?.manual == true) return@LaunchedEffect
         val client = LocationServices.getFusedLocationProviderClient(context)
         // Start immediately from the last reliable fix; getCurrentLocation can
         // remain pending indoors and previously prevented automatic scraping.
@@ -211,6 +214,11 @@ fun SearchScreen(
             .addOnSuccessListener { location ->
                 if (location != null) viewModel.refreshForLocation(location.latitude, location.longitude)
             }
+    }
+
+    LaunchedEffect(searchArea) {
+        val area = searchArea?.takeIf { it.manual } ?: return@LaunchedEffect
+        viewModel.refreshForLocation(area.latitude, area.longitude)
     }
 
     Column(
