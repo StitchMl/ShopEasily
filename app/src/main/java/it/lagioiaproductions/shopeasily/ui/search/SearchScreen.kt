@@ -71,6 +71,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
@@ -260,16 +261,19 @@ fun SearchScreen(
                     "ShopEasily",
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(start = 8.dp).clickable { helpTopic = HomeHelpTopic.WELCOME },
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(start = 8.dp)
+                        .clickable { helpTopic = HomeHelpTopic.WELCOME }
+                        .weight(1f),
                 )
-                Spacer(Modifier.weight(1f))
                 HeaderMetric(
                     Icons.Rounded.ShoppingBasket,
-                    NumberFormat.getCurrencyInstance(Locale.ITALY).format(state.activeProductsTotal),
+                    compactMoney(state.activeProductsTotal),
                 ) { helpTopic = HomeHelpTopic.PRODUCT_COST }
                 HeaderMetric(
                     Icons.Rounded.LocalGasStation,
-                    NumberFormat.getCurrencyInstance(Locale.ITALY).format(state.activeTravelCost),
+                    compactMoney(state.activeTravelCost),
                 ) { helpTopic = HomeHelpTopic.TRAVEL_COST }
                 HeaderMetric(Icons.Rounded.Eco, compactEmission(state.activeEmissionKg)) {
                     helpTopic = HomeHelpTopic.EMISSIONS
@@ -600,13 +604,15 @@ private fun HeaderMetric(icon: ImageVector, value: String, onClick: () -> Unit) 
             .padding(start = 3.dp)
             .clip(MaterialTheme.shapes.small)
             .clickable(onClick = onClick)
-            .padding(horizontal = 4.dp, vertical = 5.dp),
+            .padding(horizontal = 3.dp, vertical = 5.dp)
+            .widthIn(max = 76.dp),
     ) {
         Icon(icon, contentDescription = null, modifier = Modifier.size(15.dp))
         Text(
             text = value,
             style = MaterialTheme.typography.labelSmall,
             maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(start = 2.dp),
         )
     }
@@ -649,6 +655,12 @@ private fun compactEmission(emissionKg: Double): String =
     } else {
         "%.1f kg".format(Locale.ITALY, emissionKg)
     }
+
+private fun compactMoney(value: Double): String = when {
+    value < 1_000.0 -> NumberFormat.getCurrencyInstance(Locale.ITALY).format(value)
+    value < 1_000_000.0 -> "%.1fk €".format(Locale.ITALY, value / 1_000.0)
+    else -> "%.1fM €".format(Locale.ITALY, value / 1_000_000.0)
+}
 
 @Composable
 private fun HomeInsights(state: SearchUiState) {

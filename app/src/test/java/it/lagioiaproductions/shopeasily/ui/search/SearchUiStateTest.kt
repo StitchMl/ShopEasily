@@ -2,6 +2,8 @@ package it.lagioiaproductions.shopeasily.ui.search
 
 import it.lagioiaproductions.shopeasily.domain.EcoBasketEstimate
 import it.lagioiaproductions.shopeasily.domain.EcoItemEstimate
+import it.lagioiaproductions.shopeasily.domain.SearchFilters
+import it.lagioiaproductions.shopeasily.domain.SortMode
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -50,5 +52,29 @@ class SearchUiStateTest {
         assertEquals(2.0, state.activeTravelCost, 0.001)
         assertEquals(12.0, state.activeCartTotal, 0.001)
         assertEquals(1.0, state.activeEmissionKg, 0.001)
+    }
+
+    @Test
+    fun minimumBasketModeTemporarilyReplacesUserSelectionMetrics() {
+        val minimum = SearchUiState(
+            filters = SearchFilters(sortMode = SortMode.PRICE),
+            manualCartProductsTotal = 10.0,
+            manualCartFuelCost = 2.0,
+            manualCartTotal = 12.0,
+            manualCartEmissionKg = 1.0,
+            minimumBasketProductsTotal = 7.0,
+            minimumBasketTravelCost = 0.5,
+            minimumBasketEmissionKg = 0.2,
+        )
+        assertEquals(7.0, minimum.activeProductsTotal, 0.001)
+        assertEquals(0.5, minimum.activeTravelCost, 0.001)
+        assertEquals(7.5, minimum.activeCartTotal, 0.001)
+        assertEquals(0.2, minimum.activeEmissionKg, 0.001)
+
+        val restored = minimum.copy(filters = SearchFilters(sortMode = SortMode.SMART))
+        assertEquals(10.0, restored.activeProductsTotal, 0.001)
+        assertEquals(2.0, restored.activeTravelCost, 0.001)
+        assertEquals(12.0, restored.activeCartTotal, 0.001)
+        assertEquals(1.0, restored.activeEmissionKg, 0.001)
     }
 }

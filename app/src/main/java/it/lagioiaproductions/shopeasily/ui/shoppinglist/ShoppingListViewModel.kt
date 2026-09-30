@@ -11,6 +11,7 @@ import it.lagioiaproductions.shopeasily.data.repository.OnDeviceCatalogRepositor
 import it.lagioiaproductions.shopeasily.data.repository.RoutePoint
 import it.lagioiaproductions.shopeasily.data.repository.RoutingRepository
 import it.lagioiaproductions.shopeasily.domain.BasketOptimizer
+import it.lagioiaproductions.shopeasily.domain.GeneralProductName
 import it.lagioiaproductions.shopeasily.domain.BasketPlan
 import it.lagioiaproductions.shopeasily.domain.TransportProfile
 import kotlinx.coroutines.Dispatchers
@@ -77,7 +78,7 @@ class ShoppingListViewModel(application: Application) : AndroidViewModel(applica
             selectedItems = cart.map { entry ->
                 SelectedShoppingItem(
                     offerId = entry.offerId,
-                    name = entry.name.ifBlank { "Prodotto selezionato" },
+                    name = GeneralProductName.from(entry.name, entry.storeName).ifBlank { "Prodotto selezionato" },
                     storeName = entry.storeName,
                     price = entry.price.takeUnless(Double::isNaN) ?: 0.0,
                     promotional = entry.promotional,

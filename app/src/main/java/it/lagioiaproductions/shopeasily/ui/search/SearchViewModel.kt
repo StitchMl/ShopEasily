@@ -18,6 +18,7 @@ import it.lagioiaproductions.shopeasily.domain.BasketOptimizer
 import it.lagioiaproductions.shopeasily.domain.EcoBasketEstimate
 import it.lagioiaproductions.shopeasily.domain.EcoBasketEstimator
 import it.lagioiaproductions.shopeasily.domain.EcoStoreCandidate
+import it.lagioiaproductions.shopeasily.domain.GeneralProductName
 import it.lagioiaproductions.shopeasily.domain.OfferRanking
 import it.lagioiaproductions.shopeasily.domain.ProductMatcher
 import it.lagioiaproductions.shopeasily.domain.SearchFilters
@@ -89,6 +90,9 @@ data class SearchUiState(
     val manualCartFuelCost: Double = 0.0,
     val manualCartTotal: Double = 0.0,
     val manualCartEmissionKg: Double = 0.0,
+    val minimumBasketProductsTotal: Double = 0.0,
+    val minimumBasketTravelCost: Double = 0.0,
+    val minimumBasketEmissionKg: Double = 0.0,
     val showSelectedOnly: Boolean = false,
     val ambiguousImageUrls: Set<String> = emptySet(),
     /** Background refresh in progress: shown as a thin, non-blocking indicator. */
@@ -105,19 +109,33 @@ data class SearchUiState(
      * persisted/manual-cart metrics remain the fallback when no shop is active.
      */
     val activeProductsTotal: Double
-        get() = selectedEcoPlan?.productsTotal ?: manualCartProductsTotal
+        get() = minimumBasketMetrics?.productsTotal
+            ?: selectedEcoPlan?.productsTotal
+            ?: manualCartProductsTotal
     val activeTravelCost: Double
-        get() = selectedEcoPlan?.travelCost ?: manualCartFuelCost
+        get() = minimumBasketMetrics?.fuelCost
+            ?: selectedEcoPlan?.travelCost
+            ?: manualCartFuelCost
     val activeCartTotal: Double
-        get() = selectedEcoPlan?.total ?: manualCartTotal
+        get() = minimumBasketMetrics?.let { it.productsTotal + it.fuelCost }
+            ?: selectedEcoPlan?.total
+            ?: manualCartTotal
     val activeEmissionKg: Double
-        get() = selectedEcoPlan?.emissionKg ?: manualCartEmissionKg
+        get() = minimumBasketMetrics?.emissionKg
+            ?: selectedEcoPlan?.emissionKg
+            ?: manualCartEmissionKg
     val activeItemCount: Int
         get() = selectedEcoPlan?.items?.size ?: manualCartItems
 
     private val selectedEcoPlan: EcoBasketEstimate?
         get() = selectedLocalStoreId?.let(ecoEstimatedPlans::get)
+    private val minimumBasketMetrics: ActiveBasketMetrics?
+        get() = if (filters.sortMode == SortMode.PRICE) {
+            ActiveBasketMetrics(minimumBasketProductsTotal, minimumBasketTravelCost, minimumBasketEmissionKg)
+        } else null
 }
+
+private data class ActiveBasketMetrics(val productsTotal: Double, val fuelCost: Double, val emissionKg: Double)
 
 data class StoreOfferGroup(
     val key: String,
@@ -156,11 +174,15 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     private var summaryJob: Job? = null
     private var manualMetricsJob: Job? = null
     private var shoppingSnapshotJob: Job? = null
+    private var instantFilterJob: Job? = null
     private var enrichJob: Job? = null
     private var lastCatalogVersion: Long? = null
     @Volatile private var lastUnfiltered: List<Offer> = emptyList()
     @Volatile private var offersByStoreKey: Map<String, List<Offer>> = emptyMap()
     @Volatile private var latestManualCart: List<CartEntry> = emptyList()
+    @Volatile private var latestShoppingItems: List<Pair<String, Boolean>> = emptyList()
+    @Volatile private var latestPreferences: UserPreferences = UserPreferences()
+    @Volatile private var latestSelectedOffers: List<Offer> = emptyList()
 
     /** Cached, ranked catalogue: re-read only when the database changes or filters change. */
     private var rankedCache: List<Offer> = emptyList()
@@ -178,6 +200,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         }
         viewModelScope.launch {
             val preferences = runCatching { preferencesRepository.preferences.first() }.getOrDefault(UserPreferences())
+            latestPreferences = preferences
             _uiState.update { it.copy(filters = it.filters.copy(includeLoyaltyOffers = preferences.includeLoyaltyOffers)) }
             search(silent = restoredState != null)
         }
@@ -208,15 +231,26 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 refreshManualCartMetrics()
                 val shoppingItems = runCatching { preferencesRepository.shoppingItems.first() }.getOrDefault(emptyList())
                 publishShoppingListSnapshot(shoppingItems, cart)
-                refreshCartSummary(restart = true)
+                if (_uiState.value.filters.sortMode == SortMode.PRICE) {
+                    applyCachedFilters(_uiState.value.filters)
+                    search(silent = true)
+                } else {
+                    refreshCartSummary(restart = true)
+                }
             }
         }
         // The shopping list can be edited on another bottom-bar screen while this
         // ViewModel stays alive. Recalculate estimates as soon as it changes.
         viewModelScope.launch {
             preferencesRepository.shoppingItems.catch { }.collect { items ->
+                latestShoppingItems = items
                 publishShoppingListSnapshot(items, latestManualCart)
-                refreshCartSummary(restart = true)
+                if (_uiState.value.filters.sortMode == SortMode.PRICE) {
+                    applyCachedFilters(_uiState.value.filters)
+                    search(silent = true)
+                } else {
+                    refreshCartSummary(restart = true)
+                }
             }
         }
         viewModelScope.launch {
@@ -269,7 +303,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 preferencesRepository.toggleManualCartOffer(
                     CartEntry(
                         offer.id,
-                        offer.productName,
+                        GeneralProductName.from(offer.productName, offer.storeName, offer.brand),
                         offer.storeName,
                         offer.price,
                         offer.promotional,
@@ -411,7 +445,58 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     private fun updateFilters(filters: SearchFilters) {
         _uiState.update { it.copy(filters = filters) }
         userChangePending = true
+        applyCachedFilters(filters)
         search(silent = true)
+    }
+
+    /** Immediate UI projection; the regular search then validates it against Room. */
+    private fun applyCachedFilters(filters: SearchFilters) {
+        instantFilterJob?.cancel()
+        val source = catalogOffersCache ?: rankedCache
+        if (source.isEmpty()) return
+        val query = _uiState.value.query.trim()
+        val selectedStore = _uiState.value.selectedStore
+        val showSelectedOnly = _uiState.value.showSelectedOnly
+        val selectedIds = latestManualCart.map(CartEntry::offerId).toSet()
+        val requested = (
+            latestShoppingItems.filterNot { it.second }.map { it.first } +
+                latestManualCart.map { GeneralProductName.from(it.name, it.storeName) }
+            ).filter(String::isNotBlank).distinctBy { ProductMatcher.key(it) }
+        instantFilterJob = viewModelScope.launch(Dispatchers.Default) {
+            val ranked = OfferRanking.apply(source, filters)
+            val queried = if (query.isBlank() || (filters.sortMode == SortMode.PRICE && requested.isNotEmpty())) {
+                ranked
+            } else {
+                ranked.filter { ProductMatcher.matches(it.productName, query) || it.storeName.contains(query, true) }
+            }
+            val displayable = queried.filter { !showSelectedOnly || it.id in selectedIds }
+            val storesIndex = displayable.groupBy { StoreDeduplicator.brandKey(it.storeName) }
+            val filteredByStore = selectedStore?.let { store ->
+                storesIndex[StoreDeduplicator.brandKey(store)].orEmpty()
+            } ?: displayable
+            val assignments = if (filters.sortMode == SortMode.PRICE && requested.isNotEmpty()) {
+                cheapestAssignments(requested, filteredByStore, latestSelectedOffers)
+            } else emptyList()
+            val visible = if (assignments.isNotEmpty() ||
+                (filters.sortMode == SortMode.PRICE && requested.isNotEmpty())
+            ) assignments.map { it.second }.distinctBy(Offer::id) else filteredByStore
+            val metrics = if (filters.sortMode == SortMode.PRICE && requested.isNotEmpty()) {
+                calculateOfferBasketMetrics(assignments.map { it.second }, latestPreferences)
+            } else ManualCartMetrics(0, 0.0, 0.0, 0.0)
+            _uiState.update { state ->
+                if (state.filters != filters) state else state.copy(
+                    offers = visible,
+                    offerGroups = groupOffers(visible, filters),
+                    availableStores = storesIndex.values.map { offers ->
+                        StoreDeduplicator.brandDisplayName(offers.first().storeName)
+                    }.distinct().sortedBy { it.lowercase(Locale.ROOT) },
+                    minimumBasketProductsTotal = metrics.productsTotal,
+                    minimumBasketTravelCost = metrics.fuelCost,
+                    minimumBasketEmissionKg = metrics.emissionKg,
+                    orderVersion = state.orderVersion + 1,
+                )
+            }
+        }
     }
 
     private suspend fun invalidateCatalog() = cacheMutex.withLock {
@@ -439,18 +524,28 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
             if (!silent && _uiState.value.offers.isEmpty()) _uiState.update { it.copy(isLoading = true) }
             val query = _uiState.value.query.trim()
             val preferences = runCatching { preferencesRepository.preferences.first() }.getOrDefault(UserPreferences())
+            latestPreferences = preferences
             val filters = _uiState.value.filters.copy(
                 userAge = preferences.age,
                 maximumDistanceMeters = preferences.radiusKm * 1_000,
                 loyaltyCards = preferences.loyaltyCards,
             )
-            val selectedIds = runCatching { preferencesRepository.manualCartOfferIds.first() }.getOrDefault(emptySet())
+            val cartEntries = runCatching { preferencesRepository.manualCart.first() }.getOrDefault(emptyList())
+            val selectedIds = cartEntries.map(CartEntry::offerId).toSet()
+            val selectedOffers = runCatching { repository.offersByIds(selectedIds) }.getOrDefault(emptyList())
+            latestSelectedOffers = selectedOffers
+            val listItems = runCatching { preferencesRepository.shoppingItems.first() }.getOrDefault(emptyList())
+            val requestedProducts = (
+                listItems.filterNot { it.second }.map { it.first } +
+                    cartEntries.map { GeneralProductName.from(it.name, it.storeName) }
+                ).filter(String::isNotBlank).distinctBy { ProductMatcher.key(it) }
             val showSelectedOnly = _uiState.value.showSelectedOnly
             val requestedStore = _uiState.value.selectedStore
 
             val result = withContext(Dispatchers.Default) {
                 val allRanked = ranked(filters)
-                val results = if (query.isBlank()) allRanked else allRanked.filter { offer ->
+                val minimumMode = filters.sortMode == SortMode.PRICE && requestedProducts.isNotEmpty()
+                val results = if (query.isBlank() || minimumMode) allRanked else allRanked.filter { offer ->
                     ProductMatcher.matches(offer.productName, query) || offer.storeName.contains(query, ignoreCase = true)
                 }
                 val displayable = results.filter { !showSelectedOnly || it.id in selectedIds }
@@ -465,8 +560,23 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 val selectedStore = requestedStore?.let { selected ->
                     stores.firstOrNull { StoreDeduplicator.belongsToBrand(it, selected) }
                 }
-                val visible = displayable.filter { offer ->
+                val storeVisible = displayable.filter { offer ->
                     selectedStore == null || StoreDeduplicator.belongsToBrand(offer.storeName, selectedStore)
+                }
+                val minimumAssignments = if (minimumMode) {
+                    cheapestAssignments(requestedProducts, storeVisible, selectedOffers)
+                } else {
+                    emptyList()
+                }
+                val visible = if (minimumMode) {
+                    minimumAssignments.map { it.second }.distinctBy(Offer::id)
+                } else {
+                    storeVisible
+                }
+                val minimumMetrics = if (minimumMode) {
+                    calculateOfferBasketMetrics(minimumAssignments.map { it.second }, preferences)
+                } else {
+                    ManualCartMetrics(0, 0.0, 0.0, 0.0)
                 }
                 val today = SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).format(Date())
                 SearchSnapshot(
@@ -506,6 +616,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                         )
                         .take(MAX_LOCAL_ALTERNATIVES)
                         .toList(),
+                    minimumMetrics = minimumMetrics,
                 )
             }
             _uiState.update { state ->
@@ -520,6 +631,9 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                     expiringToday = result.expiringToday,
                     ambiguousImageUrls = result.ambiguousImages,
                     localAlternatives = result.localAlternatives,
+                    minimumBasketProductsTotal = result.minimumMetrics.productsTotal,
+                    minimumBasketTravelCost = result.minimumMetrics.fuelCost,
+                    minimumBasketEmissionKg = result.minimumMetrics.emissionKg,
                     isLoading = false,
                     orderVersion = if (userChangePending) state.orderVersion + 1 else state.orderVersion,
                 )
@@ -847,6 +961,34 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         .filter { StoreDeduplicator.belongsToBrand(it.name, storeName) }
         .minOfOrNull(NearbyStore::distanceMeters) ?: 0
 
+    private fun cheapestAssignments(
+        requested: List<String>,
+        offers: List<Offer>,
+        fallbackOffers: List<Offer> = emptyList(),
+    ): List<Pair<String, Offer>> =
+        requested.mapNotNull { product ->
+            (offers.asSequence()
+                .filter { ProductMatcher.matches(it.productName, product) }
+                .minWithOrNull(compareBy<Offer>(Offer::price).thenBy(Offer::distanceMeters))
+                ?: fallbackOffers.asSequence()
+                    .filter { ProductMatcher.matches(it.productName, product) }
+                    .minWithOrNull(compareBy<Offer>(Offer::price).thenBy(Offer::distanceMeters)))
+                ?.let { product to it }
+        }
+
+    private fun calculateOfferBasketMetrics(offers: List<Offer>, preferences: UserPreferences): ManualCartMetrics {
+        val transport = preferences.transportProfile()
+        val travelKm = offers.groupBy { StoreDeduplicator.brandKey(it.storeName) }.values.sumOf { storeOffers ->
+            (storeOffers.maxOfOrNull(Offer::distanceMeters) ?: 0) * 2.0 / 1_000.0
+        }
+        return ManualCartMetrics(
+            items = offers.size,
+            productsTotal = offers.sumOf(Offer::price),
+            fuelCost = travelKm * transport.costPerKm(),
+            emissionKg = travelKm * transport.emissionKgPerKm(),
+        )
+    }
+
     private fun groupOffers(offers: List<Offer>, filters: SearchFilters): List<StoreOfferGroup> {
         val groups = offers.groupBy { StoreDeduplicator.brandKey(it.storeName) }
             .map { (key, entries) ->
@@ -888,6 +1030,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         val expiringToday: Int,
         val ambiguousImages: Set<String>,
         val localAlternatives: List<NearbyStore>,
+        val minimumMetrics: ManualCartMetrics,
     )
 
     private companion object {
