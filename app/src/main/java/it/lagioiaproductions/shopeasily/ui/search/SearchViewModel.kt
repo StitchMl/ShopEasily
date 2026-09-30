@@ -26,6 +26,8 @@ import it.lagioiaproductions.shopeasily.domain.TransportProfile
 import it.lagioiaproductions.shopeasily.domain.StoreSustainabilityResult
 import it.lagioiaproductions.shopeasily.domain.StoreAssessment
 import it.lagioiaproductions.shopeasily.domain.StoreAssessmentEngine
+import it.lagioiaproductions.shopeasily.domain.effectiveQualityScore
+import it.lagioiaproductions.shopeasily.domain.sustainabilityScore
 import it.lagioiaproductions.shopeasily.sync.CatalogSyncWorker
 import it.lagioiaproductions.shopeasily.sync.SyncProgress
 import java.text.SimpleDateFormat
@@ -56,6 +58,7 @@ import kotlinx.coroutines.withContext
 data class SearchUiState(
     val query: String = "",
     val offers: List<Offer> = emptyList(),
+    val offerGroups: List<StoreOfferGroup> = emptyList(),
     val isLoading: Boolean = false,
     val filters: SearchFilters = SearchFilters(),
     val availableStores: List<String> = emptyList(),
@@ -95,6 +98,12 @@ data class SearchUiState(
     val message: String? = null,
     /** Nearby markets and shops with no usable public price yet: never hidden from Home. */
     val localAlternatives: List<NearbyStore> = emptyList(),
+)
+
+data class StoreOfferGroup(
+    val key: String,
+    val storeName: String,
+    val offers: List<Offer>,
 )
 
 /**
@@ -295,6 +304,10 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 selectedStore = storeName,
                 // Pre-indexed during the background search: filtering is O(1) on the UI thread.
                 offers = if (storeKey == null) base else offersByStoreKey[storeKey].orEmpty(),
+                offerGroups = groupOffers(
+                    if (storeKey == null) base else offersByStoreKey[storeKey].orEmpty(),
+                    state.filters,
+                ),
                 orderVersion = state.orderVersion + 1,
             )
         }
@@ -318,7 +331,14 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     fun clearFilters(): Boolean {
         val state = _uiState.value
         if (state.selectedStore == null && !state.showSelectedOnly) return false
-        _uiState.update { it.copy(selectedStore = null, showSelectedOnly = false, offers = lastUnfiltered) }
+        _uiState.update {
+            it.copy(
+                selectedStore = null,
+                showSelectedOnly = false,
+                offers = lastUnfiltered,
+                offerGroups = groupOffers(lastUnfiltered, it.filters),
+            )
+        }
         search(silent = true)
         return true
     }
@@ -355,6 +375,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         catalogOffersCache = null
         rankingsCache.clear()
         catalogPricesCache = null
+        storesCache = emptyList()
     }
 
     private var pendingSilentRefresh = false
@@ -406,6 +427,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 val today = SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).format(Date())
                 SearchSnapshot(
                     offers = visible,
+                    offerGroups = groupOffers(visible, filters),
                     stores = stores,
                     selectedStore = selectedStore,
                     websites = stores.associateWith { name ->
@@ -428,8 +450,15 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                         }
                         .sortedWith(
                             compareByDescending<NearbyStore> { it.sustainabilityScore }
-                                .thenBy { if (it.category == "marketplace" || it.category == "farm") 0 else 1 }
-                                .thenBy(NearbyStore::distanceMeters),
+                                .thenBy(NearbyStore::distanceMeters)
+                                .thenByDescending { store ->
+                                    store.sustainabilityReasons.any { reason ->
+                                        reason.contains("equo", true) ||
+                                            reason.contains("fair", true) ||
+                                            reason.contains("solidale", true)
+                                    }
+                                }
+                                .thenBy { if (it.category == "marketplace" || it.category == "farm") 0 else 1 },
                         )
                         .take(MAX_LOCAL_ALTERNATIVES)
                         .toList(),
@@ -438,6 +467,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
             _uiState.update { state ->
                 state.copy(
                     offers = result.offers,
+                    offerGroups = result.offerGroups,
                     filters = filters,
                     availableStores = result.stores,
                     storeWebsites = result.websites,
@@ -543,6 +573,11 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                             distanceMeters = store.distanceMeters,
                             greenScore = store.sustainabilityScore,
                             observedQualityScore = assessments[store.id]?.qualityScore,
+                            fairTrade = store.sustainabilityReasons.any { reason ->
+                                reason.contains("equo", ignoreCase = true) ||
+                                    reason.contains("fair", ignoreCase = true) ||
+                                    reason.contains("solidale", ignoreCase = true)
+                            },
                         )
                     },
                     transport = transport,
@@ -675,8 +710,40 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         .filter { StoreDeduplicator.belongsToBrand(it.name, storeName) }
         .minOfOrNull(NearbyStore::distanceMeters) ?: 0
 
+    private fun groupOffers(offers: List<Offer>, filters: SearchFilters): List<StoreOfferGroup> {
+        val groups = offers.groupBy { StoreDeduplicator.brandKey(it.storeName) }
+            .map { (key, entries) ->
+                StoreOfferGroup(key, StoreDeduplicator.brandDisplayName(entries.first().storeName), entries)
+            }
+        val comparator = when {
+            filters.sustainableOnly -> compareByDescending<StoreOfferGroup> { group ->
+                group.offers.maxOfOrNull(Offer::sustainabilityScore) ?: 0
+            }.thenBy { group -> group.offers.minOfOrNull(Offer::distanceMeters) ?: Int.MAX_VALUE }
+                .thenByDescending { group ->
+                    group.offers.any { offer ->
+                        offer.sustainabilityLabels.any { label ->
+                            label.contains("equo", true) || label.contains("fair", true) || label.contains("solidale", true)
+                        }
+                    }
+                }
+                .thenBy { group -> group.offers.minOfOrNull { it.unitPrice ?: it.price } ?: Double.MAX_VALUE }
+            filters.sortMode == SortMode.PRICE -> compareBy { group: StoreOfferGroup ->
+                group.offers.minOfOrNull { it.unitPrice ?: it.price } ?: Double.MAX_VALUE
+            }
+            filters.sortMode == SortMode.DISTANCE -> compareBy { group: StoreOfferGroup ->
+                group.offers.minOfOrNull(Offer::distanceMeters) ?: Int.MAX_VALUE
+            }
+            filters.sortMode == SortMode.QUALITY -> compareByDescending { group: StoreOfferGroup ->
+                group.offers.maxOfOrNull(Offer::effectiveQualityScore) ?: 0f
+            }
+            else -> compareBy { group: StoreOfferGroup -> offers.indexOf(group.offers.first()) }
+        }
+        return groups.sortedWith(comparator)
+    }
+
     private data class SearchSnapshot(
         val offers: List<Offer>,
+        val offerGroups: List<StoreOfferGroup>,
         val stores: List<String>,
         val selectedStore: String?,
         val websites: Map<String, String?>,

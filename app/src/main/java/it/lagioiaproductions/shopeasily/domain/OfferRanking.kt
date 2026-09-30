@@ -52,6 +52,7 @@ object OfferRanking {
             return candidates.sortedWith(
                 compareByDescending<Offer>(Offer::sustainabilityScore)
                     .thenBy(Offer::distanceMeters)
+                    .thenByDescending { it.hasFairTradeEvidence() }
                     .thenBy { it.unitPriceOrPrice() },
             )
         }
@@ -84,6 +85,11 @@ object OfferRanking {
     }
 
     private fun Offer.unitPriceOrPrice(): Double = unitPrice ?: price
+
+    private fun Offer.hasFairTradeEvidence(): Boolean = sustainabilityLabels.any { label ->
+        val normalized = label.lowercase()
+        "equo" in normalized || "fair" in normalized || "solidale" in normalized
+    }
 
 }
 

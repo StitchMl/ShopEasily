@@ -10,6 +10,7 @@ data class EcoStoreCandidate(
     val distanceMeters: Int,
     val greenScore: Int,
     val observedQualityScore: Int? = null,
+    val fairTrade: Boolean = false,
 )
 
 data class EcoItemEstimate(
@@ -29,6 +30,7 @@ data class EcoBasketEstimate(
     val emissionKg: Double,
     val qualityScore: Int,
     val qualityFromReviews: Boolean,
+    val fairTrade: Boolean,
 ) {
     val total: Double = productsTotal + travelCost
     val lowConfidenceItems: Int = items.count { it.observations < 3 }
@@ -65,10 +67,12 @@ object EcoBasketEstimator {
                 qualityScore = store.observedQualityScore
                     ?: (45 + store.greenScore.coerceIn(0, 100) * 0.4).roundToInt().coerceIn(0, 100),
                 qualityFromReviews = store.observedQualityScore != null,
+                fairTrade = store.fairTrade,
             )
         }.sortedWith(
             compareByDescending<EcoBasketEstimate> { it.greenScore }
                 .thenBy { it.emissionKg }
+                .thenByDescending { it.fairTrade }
                 .thenBy { it.total },
         )
     }

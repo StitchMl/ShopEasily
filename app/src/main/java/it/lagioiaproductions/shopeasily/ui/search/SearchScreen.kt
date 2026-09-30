@@ -384,24 +384,13 @@ fun SearchScreen(
                     state = listState,
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    if (state.filters.sustainableOnly) {
+                    if (state.filters.sustainableOnly || state.selectedLocalStoreId != null) {
                         state.bestEcoEstimatedPlan?.let { plan ->
                             item { EcoEstimateCard(plan) }
                         }
                     }
-                    if (state.offers.isEmpty()) item { EmptyResults(hasAlternatives = state.localAlternatives.isNotEmpty()) }
-                    items(items = state.offers, key = Offer::id) { offer ->
-                        OfferCard(
-                            offer = offer,
-                            selected = offer.id in state.selectedOfferIds,
-                            showSustainabilityScore = state.filters.sustainableOnly,
-                            allowLegacyImage = offer.productImageUrl?.let { imageUrl ->
-                                imageUrl !in state.ambiguousImageUrls &&
-                                    ProductImageMatcher.matchesLegacyImage(offer.productName, imageUrl)
-                            } == true,
-                            onToggle = { viewModel.toggleOfferSelection(offer) },
-                        )
-                    }
+                    // Local shops without a public price must remain discoverable: placing
+                    // them after thousands of offers made them effectively invisible.
                     if (state.localAlternatives.isNotEmpty() && !state.showSelectedOnly) {
                         item {
                             Text(
@@ -427,9 +416,51 @@ fun SearchScreen(
                             )
                         }
                     }
+                    if (state.offers.isEmpty()) item { EmptyResults(hasAlternatives = state.localAlternatives.isNotEmpty()) }
+                    state.offerGroups.forEach { group ->
+                        item(key = "store-header-${group.key}") {
+                            StoreGroupHeader(group)
+                        }
+                        items(items = group.offers, key = Offer::id) { offer ->
+                            OfferCard(
+                                offer = offer,
+                                selected = offer.id in state.selectedOfferIds,
+                                showSustainabilityScore = state.filters.sustainableOnly,
+                                allowLegacyImage = offer.productImageUrl?.let { imageUrl ->
+                                    imageUrl !in state.ambiguousImageUrls &&
+                                        ProductImageMatcher.matchesLegacyImage(offer.productName, imageUrl)
+                                } == true,
+                                onToggle = { viewModel.toggleOfferSelection(offer) },
+                            )
+                        }
+                    }
                     item { Spacer(Modifier.height(16.dp)) }
                 }
             }
+    }
+}
+
+@Composable
+private fun StoreGroupHeader(group: StoreOfferGroup) {
+    val nearest = group.offers.minOfOrNull(Offer::distanceMeters) ?: 0
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        StoreFilterLogo(group.storeName, group.offers.firstOrNull()?.storeWebsite)
+        Text(
+            group.storeName,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            modifier = Modifier.padding(start = 8.dp).weight(1f),
+        )
+        Text(
+            "${group.offers.size} · ${distanceLabel(nearest)}",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+        )
     }
 }
 
@@ -716,7 +747,8 @@ private fun EcoEstimateCard(plan: EcoBasketEstimate) {
             )
             Text(
                 "Foglia ${plan.greenScore}/100 · qualità ~${plan.qualityScore}/100" +
-                    if (plan.qualityFromReviews) " da recensioni" else " stimata",
+                    (if (plan.qualityFromReviews) " da recensioni" else " stimata") +
+                    if (plan.fairTrade) " · equosolidale" else "",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.secondary,
                 maxLines = 1,
