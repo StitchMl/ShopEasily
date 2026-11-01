@@ -23,7 +23,6 @@ import it.lagioiaproductions.shopeasily.data.repository.parsers.ChainSourceAdapt
 import it.lagioiaproductions.shopeasily.data.repository.parsers.HtmlProductParser
 import it.lagioiaproductions.shopeasily.data.repository.parsers.OcrFlyerReader
 import it.lagioiaproductions.shopeasily.data.repository.parsers.OfferTextParser
-import it.lagioiaproductions.shopeasily.BuildConfig
 import it.lagioiaproductions.shopeasily.data.repository.sources.EcommerceApiSource
 import it.lagioiaproductions.shopeasily.data.repository.sources.FarmerMarketSource
 import it.lagioiaproductions.shopeasily.data.repository.sources.GooglePlacesSource
@@ -98,7 +97,7 @@ class OnDeviceCatalogRepository(
     private val http = HttpFetcher(USER_AGENT)
     private val brands = BrandDirectory.get(appContext)
     private val googlePlaces = GooglePlacesSource(
-        BuildConfig.GOOGLE_PLACES_API_KEY,
+        "", // Places is deliberately disabled: store discovery uses OpenStreetMap.
         http,
         androidPackage = appContext.packageName,
         androidCertSha1 = signingCertSha1(appContext),
