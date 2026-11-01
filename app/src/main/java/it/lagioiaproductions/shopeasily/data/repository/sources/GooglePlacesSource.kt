@@ -27,7 +27,7 @@ data class GooglePlace(
 /**
  * Official Google Places API (New). Reading Google Maps pages directly is not allowed
  * by Google's terms, so this source works only with the developer's own API key
- * (`GOOGLE_PLACES_API_KEY` in local.properties). Places has no product prices, but it
+ * (currently disabled in the app). Places has no product prices, but it
  * knows many small shops and their websites that are missing in OpenStreetMap: the app
  * then reads prices from those websites.
  */
