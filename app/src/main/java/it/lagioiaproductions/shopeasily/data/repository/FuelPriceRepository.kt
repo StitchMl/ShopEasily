@@ -2,7 +2,7 @@ package it.lagioiaproductions.shopeasily.data.repository
 
 import it.lagioiaproductions.shopeasily.data.preferences.FuelType
 import java.net.HttpURLConnection
-import java.net.URL
+import java.net.URI
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -11,7 +11,7 @@ class FuelPriceRepository {
         if (fuel == FuelType.NONE) return@withContext 0.0
         if (fuel == FuelType.ELECTRIC) return@withContext ELECTRIC_REFERENCE_EUR_KWH
         runCatching {
-            val connection = URL(MIMIT_DAILY_PRICES).openConnection() as HttpURLConnection
+            val connection = URI(MIMIT_DAILY_PRICES).toURL().openConnection() as HttpURLConnection
             connection.connectTimeout = 10_000
             connection.readTimeout = 20_000
             connection.setRequestProperty("User-Agent", USER_AGENT)

@@ -2,7 +2,7 @@ package it.lagioiaproductions.shopeasily.data.repository
 
 import android.content.Context
 import java.net.HttpURLConnection
-import java.net.URL
+import java.net.URI
 import kotlin.math.asin
 import kotlin.math.cos
 import kotlin.math.roundToInt
@@ -88,7 +88,7 @@ class RoutingRepository(context: Context? = null) {
     private fun pointKey(point: RoutePoint) = "%.4f,%.4f".format(java.util.Locale.US, point.latitude, point.longitude)
 
     private fun getJson(value: String): JSONObject? = runCatching {
-        val connection = URL(value).openConnection() as HttpURLConnection
+        val connection = URI(value).toURL().openConnection() as HttpURLConnection
         connection.connectTimeout = 3_000
         connection.readTimeout = 5_000
         connection.setRequestProperty("User-Agent", USER_AGENT)

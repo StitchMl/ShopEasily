@@ -465,7 +465,7 @@ class OnDeviceCatalogRepository(
                 ?: placesWebsite?.let(HttpFetcher::secureUrl)
                 ?: NonShopSites.shopWebsiteOrNull(brandInfo?.website)
             val directCatalogs = brandInfo?.flyerUrls.orEmpty()
-            val scored = brandInfo?.description?.let { description -> applyBrandDescription(shop, description, now) } ?: shop
+            val scored = brandInfo?.description?.let { description -> applyBrandDescription(shop, description) } ?: shop
             if (website != shop.website || scored !== shop) {
                 dao.upsertStores(listOf(scored.copy(website = website).toEntity(now)))
             }
@@ -897,11 +897,11 @@ class OnDeviceCatalogRepository(
     private fun withBrandInfo(store: NearbyStore, now: Long): NearbyStore {
         val info = (store.brand ?: StoreDeduplicator.brandOf(store.name))?.let(brands::cached) ?: return store
         val withSite = store.copy(website = store.website ?: info.website)
-        return info.description?.let { applyBrandDescription(withSite, it, now) } ?: withSite
+        return info.description?.let { applyBrandDescription(withSite, it) } ?: withSite
     }
 
     /** Adds brand-level evidence (e.g. Wikidata "catena di supermercati biologici") to the store leaf. */
-    private fun applyBrandDescription(shop: NearbyStore, description: String, now: Long): NearbyStore {
+    private fun applyBrandDescription(shop: NearbyStore, description: String): NearbyStore {
         val extra = StoreSustainability.evaluate("", "", emptyMap(), isChain = true, brandDescription = description)
         val newReasons = extra.reasons.filterNot(shop.sustainabilityReasons::contains)
         if (newReasons.isEmpty()) return shop
@@ -922,10 +922,12 @@ class OnDeviceCatalogRepository(
                 val offer = firstOffer(product.opt("offers"))
                 val price = offer?.let(::jsonLdPrice)
                 val image = product.opt("image")
-                val imageUrl = (
-                    image as? String
-                        ?: if (image is JSONArray) image.optString(0) else (image as? JSONObject)?.optString("url")
-                    )?.takeIf { it.startsWith("http") }
+                val imageUrl = when (image) {
+                    is String -> image
+                    is JSONArray -> image.optString(0)
+                    is JSONObject -> image.optString("url")
+                    else -> null
+                }?.takeIf { it.startsWith("http") }
                 if (name.isNotBlank() && price != null && price > 0.0) {
                     result += offer(
                         name, shop.name, price, distance,

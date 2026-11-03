@@ -213,7 +213,7 @@ class BrandDirectory private constructor(context: Context) {
             val wikidata = wikidataByStore[StoreDeduplicator.canonicalName(storeName)]
             // Only chains are looked up by name from the UI; independent shops get their
             // site from the background sync, which checks their address.
-            val brand = StoreDeduplicator.brandOf(storeName) ?: storeName.takeIf { wikidata != null } ?: return null
+            val brand = StoreDeduplicator.brandOf(storeName) ?: if (wikidata != null) storeName else return null
             return runCatching { directory.resolve(brand, wikidata) }.getOrNull()
         }
 

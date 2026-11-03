@@ -5,7 +5,6 @@ import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.InetAddress
 import java.net.URI
-import java.net.URL
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -100,7 +99,7 @@ class HttpFetcher(private val userAgent: String) {
         val target = secureUrl(url) ?: return null
         var connection: HttpURLConnection? = null
         return try {
-            connection = (URL(target).openConnection() as HttpURLConnection).apply {
+            connection = (URI(target).toURL().openConnection() as HttpURLConnection).apply {
                 requestMethod = method
                 connectTimeout = CONNECT_TIMEOUT_MS
                 readTimeout = READ_TIMEOUT_MS

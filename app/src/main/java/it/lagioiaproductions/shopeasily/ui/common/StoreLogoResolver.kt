@@ -10,7 +10,6 @@ import com.caverock.androidsvg.SVG
 import java.io.ByteArrayInputStream
 import java.net.HttpURLConnection
 import java.net.URI
-import java.net.URL
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import it.lagioiaproductions.shopeasily.data.repository.BrandDirectory
@@ -72,7 +71,7 @@ object StoreLogoResolver {
         (knownLogo ?: brand?.logoUrl)?.let(::add)
         // Offer records often point to an aggregator or flyer URL: prefer the brand's own site.
         val ownSite = website?.takeUnless { url -> AGGREGATORS.any { url.contains(it, ignoreCase = true) } || NonShopSites.isNonShop(url) }
-        val homepage = (BrandDirectory.peekWebsite(storeName) ?: brand?.website) ?: ownSite?.let(::normalizeWebsite)
+        val homepage = BrandDirectory.peekWebsite(storeName) ?: brand?.website ?: ownSite?.let(::normalizeWebsite)
         if (homepage != null) {
             addAll(discoverIcons(homepage))
             runCatching {
@@ -163,7 +162,7 @@ object StoreLogoResolver {
         bitmap
     }.getOrNull()
 
-    private fun open(value: String) = (URL(HttpFetcher.secureUrl(value) ?: value).openConnection() as HttpURLConnection).apply {
+    private fun open(value: String) = (URI(HttpFetcher.secureUrl(value) ?: value).toURL().openConnection() as HttpURLConnection).apply {
         connectTimeout = 5_000
         readTimeout = 8_000
         instanceFollowRedirects = true

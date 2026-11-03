@@ -89,7 +89,7 @@ object BasketOptimizer {
 
         val candidates = storesById.values
             .sortedWith(
-                compareByDescending<Store> { store -> bestByStore.getValue(store.id).count { it != null } }
+                compareByDescending<Store> { store -> bestByStore.getValue(store.id).filterNotNull().size }
                     .thenBy { if (it.channel == StoreChannel.ONLINE) 0 else it.distanceMeters },
             )
             .take(MAX_CANDIDATE_STORES)

@@ -2,8 +2,8 @@ package it.lagioiaproductions.shopeasily.data.repository
 
 import android.content.Context
 import java.net.HttpURLConnection
+import java.net.URI
 import java.net.URLEncoder
-import java.net.URL
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jsoup.Jsoup
@@ -72,11 +72,11 @@ class VehicleEfficiencyRepository(private val context: Context) {
     }
 
     private fun get(path: String): String? {
-        val connection = URL("https://www.fueleconomy.gov/ws/rest/vehicle/$path").openConnection() as HttpURLConnection
+        val connection = URI("https://www.fueleconomy.gov/ws/rest/vehicle/$path").toURL().openConnection() as HttpURLConnection
         connection.connectTimeout = 8_000
         connection.readTimeout = 12_000
         connection.setRequestProperty("Accept", "application/xml")
-        connection.setRequestProperty("User-Agent", "ShopEasily/0.4")
+        connection.setRequestProperty(USER_AGENT_HEADER, USER_AGENT)
         return try {
             if (connection.responseCode !in 200..299) null else connection.inputStream.bufferedReader().use { it.readText() }
         } finally {
@@ -86,10 +86,10 @@ class VehicleEfficiencyRepository(private val context: Context) {
 
     private fun europeanVehicles(): List<EuropeanVehicle> {
         europeanCache?.let { return it }
-        val connection = URL(EUROPEAN_DATA_URL).openConnection() as HttpURLConnection
+        val connection = URI(EUROPEAN_DATA_URL).toURL().openConnection() as HttpURLConnection
         connection.connectTimeout = 8_000
         connection.readTimeout = 15_000
-        connection.setRequestProperty("User-Agent", "ShopEasily/0.4")
+        connection.setRequestProperty(USER_AGENT_HEADER, USER_AGENT)
         val parsed = try {
             if (connection.responseCode !in 200..299) emptyList() else {
                 val root = JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
@@ -145,10 +145,10 @@ class VehicleEfficiencyRepository(private val context: Context) {
         if (cacheFile.exists() && System.currentTimeMillis() - cacheFile.lastModified() < HISTORIC_CACHE_TTL) {
             return cacheFile.readText().also { historicCsvCache = it }
         }
-        val connection = URL(HISTORIC_VCA_DATA_URL).openConnection() as HttpURLConnection
+        val connection = URI(HISTORIC_VCA_DATA_URL).toURL().openConnection() as HttpURLConnection
         connection.connectTimeout = 10_000
         connection.readTimeout = 25_000
-        connection.setRequestProperty("User-Agent", "ShopEasily/0.4")
+        connection.setRequestProperty(USER_AGENT_HEADER, USER_AGENT)
         return try {
             if (connection.responseCode !in 200..299) cacheFile.takeIf { it.exists() }?.readText()
             else connection.inputStream.bufferedReader().use { it.readText() }.also {
@@ -209,6 +209,8 @@ class VehicleEfficiencyRepository(private val context: Context) {
         const val EUROPEAN_DATA_URL = "https://autoseeker.eu/data/models.json"
         const val HISTORIC_VCA_DATA_URL = "https://raw.githubusercontent.com/amercader/car-fuel-and-emissions/master/data.csv"
         const val HISTORIC_CACHE_TTL = 30L * 24 * 60 * 60 * 1_000
+        const val USER_AGENT_HEADER = "User-Agent"
+        const val USER_AGENT = "ShopEasily/0.4"
         @Volatile var europeanCache: List<EuropeanVehicle>? = null
         @Volatile var historicCsvCache: String? = null
         val historicYearCache = mutableMapOf<Int, List<HistoricVehicle>>()

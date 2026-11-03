@@ -21,12 +21,12 @@ object CatalogSanitizer {
         if (price < MINIMUM_PLAUSIBLE_PRICE || !OfferTextParser.looksLikeProductName(name)) return false
         val evidence = normalize("$sourceUrl ${imageUrl.orEmpty()}")
         if (aggregatorHosts.any(evidence::contains) && !sourceReferencesStore(evidence, storeName)) return false
-        val evidenceTokens = evidence.split(Regex("[^a-z0-9]+")).filter(String::isNotBlank).toSet()
+        val evidenceTokens = evidence.split(TOKEN_SEPARATOR).filter(String::isNotBlank).toSet()
         val compactEvidence = evidenceTokens.joinToString(" ")
-        val store = normalize(storeName).replace(Regex("[^a-z0-9]+"), " ")
+        val store = normalize(storeName).replace(TOKEN_SEPARATOR, " ")
         // Only distinctive brand words (4+ letters) count as evidence of another chain.
         val detected = knownBrands.map(::normalize).mapNotNull { brand ->
-            brand.split(Regex("[^a-z0-9]+")).filter { it.length >= 4 }.takeIf { it.isNotEmpty() }
+            brand.split(TOKEN_SEPARATOR).filter { it.length >= 4 }.takeIf { it.isNotEmpty() }
         }.filter { tokens -> evidenceTokens.containsAll(tokens) }
         if (compactEvidence.isEmpty() || detected.isEmpty()) return true
         val storeTokens = store.split(' ').filter(String::isNotBlank)
@@ -41,8 +41,8 @@ object CatalogSanitizer {
 
     fun sourceReferencesStore(url: String, storeName: String): Boolean {
         val normalizedUrl = normalize(url)
-        val urlTokens = normalizedUrl.split(Regex("[^a-z0-9]+")).toSet()
-        val storeTokens = normalize(storeName).split(Regex("[^a-z0-9]+"))
+        val urlTokens = normalizedUrl.split(TOKEN_SEPARATOR).toSet()
+        val storeTokens = normalize(storeName).split(TOKEN_SEPARATOR)
             .filter { it.length >= 3 && it !in genericStoreWords }
         // Short brand names (e.g. "Pam") must be a whole token of the address.
         return storeTokens.any { token -> token in urlTokens || (token.length >= 4 && normalizedUrl.contains(token)) }
@@ -60,7 +60,7 @@ object CatalogSanitizer {
     }
 
     private fun meaningfulTokens(value: String): List<String> = normalize(value)
-        .split(Regex("[^a-z0-9]+"))
+        .split(TOKEN_SEPARATOR)
         .filter { it.length >= 4 && it !in genericStoreWords }
         .distinct()
 
@@ -70,6 +70,7 @@ object CatalogSanitizer {
         .replace('_', '-')
 
     private const val MINIMUM_PLAUSIBLE_PRICE = 0.15
+    private val TOKEN_SEPARATOR = Regex("[^a-z0-9]+")
     private val genericStoreWords = setOf(
         "supermercati", "supermercato", "market", "alimentari", "panificio", "forno",
         "carne", "carni", "frutta", "verdura", "macelleria", "frutteria",

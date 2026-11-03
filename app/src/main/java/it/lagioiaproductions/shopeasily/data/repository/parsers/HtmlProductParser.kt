@@ -30,7 +30,7 @@ object HtmlProductParser {
     }
 
     fun detailLinks(html: String, baseUrl: String): List<String> = Jsoup.parse(html, baseUrl)
-        .select(containers).mapNotNull { card -> card.selectFirst("a[href]")?.absUrl("href") }
+        .select(containers).mapNotNull { card -> card.selectFirst(LINK_SELECTOR)?.absUrl("href") }
         .filter { it.startsWith("http") }.distinct()
 
     private fun parseCard(card: Element): HtmlProduct? {
@@ -43,7 +43,7 @@ object HtmlProductParser {
             .ifBlank { priceElement.text() }
         val price = parsePrice(priceText) ?: return null
         val image = card.selectFirst("[itemprop=image], img")?.let(::imageUrl)
-        val detailUrl = card.selectFirst("a[href]")?.absUrl("href")?.takeIf(String::isNotBlank)
+        val detailUrl = card.selectFirst(LINK_SELECTOR)?.absUrl("href")?.takeIf(String::isNotBlank)
         return HtmlProduct(name, price, image, detailUrl)
     }
 
@@ -82,7 +82,7 @@ object HtmlProductParser {
                 imageHolder = parent
             }
             val image = imageHolder.selectFirst("img")?.let(::imageUrl)
-            HtmlProduct(name, prices.min(), image, tile.selectFirst("a[href]")?.absUrl("href")?.takeIf(String::isNotBlank))
+            HtmlProduct(name, prices.min(), image, tile.selectFirst(LINK_SELECTOR)?.absUrl("href")?.takeIf(String::isNotBlank))
         }.distinctBy { it.name.lowercase() to it.price }
     }
 
@@ -136,6 +136,7 @@ object HtmlProductParser {
             .firstOrNull { it.length in 3..120 && OfferTextParser.looksLikeProductName(it) }
 
     private const val MAX_PRICE_NODES = 400
+    private const val LINK_SELECTOR = "a[href]"
 
     private fun parseProductPage(document: org.jsoup.nodes.Document, baseUrl: String): HtmlProduct? {
         val name = document.selectFirst("meta[property=og:title]")?.attr("content")?.trim()

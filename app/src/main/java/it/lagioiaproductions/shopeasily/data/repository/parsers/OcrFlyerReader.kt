@@ -29,6 +29,7 @@ object OcrFlyerReader {
                     } catch (_: OutOfMemoryError) {
                         return@repeat
                     } catch (_: Exception) {
+                        // A malformed page must not discard valid offers from the remaining pages.
                         return@repeat
                     }
                     try {

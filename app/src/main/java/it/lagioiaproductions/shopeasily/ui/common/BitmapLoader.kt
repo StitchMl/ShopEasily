@@ -6,7 +6,7 @@ import android.util.LruCache
 import it.lagioiaproductions.shopeasily.data.repository.net.HttpFetcher
 import java.io.File
 import java.net.HttpURLConnection
-import java.net.URL
+import java.net.URI
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -74,7 +74,7 @@ object BitmapLoader {
 
     private fun download(url: String): ByteArray? {
         val secure = HttpFetcher.secureUrl(url) ?: return null
-        val connection = URL(secure).openConnection() as HttpURLConnection
+        val connection = URI(secure).toURL().openConnection() as HttpURLConnection
         return try {
             connection.connectTimeout = 5_000
             connection.readTimeout = 8_000
