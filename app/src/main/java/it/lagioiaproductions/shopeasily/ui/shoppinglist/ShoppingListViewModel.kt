@@ -123,6 +123,7 @@ class ShoppingListViewModel(application: Application) : AndroidViewModel(applica
         optimization.value = optimization.value.copy(message = null)
     }
 
+    @Suppress("kotlin:S3776") // Coroutine orchestration keeps cancellation and atomic UI publication together.
     fun optimize() {
         optimizeJob?.cancel()
         optimizeJob = viewModelScope.launch {

@@ -54,7 +54,9 @@ object OcrFlyerReader {
                         }
                     } catch (_: OutOfMemoryError) {
                         // Skip this page; the rest of the flyer is still useful.
+                        return@repeat
                     } catch (_: Exception) {
+                        return@repeat
                     } finally {
                         bitmap.recycle()
                     }

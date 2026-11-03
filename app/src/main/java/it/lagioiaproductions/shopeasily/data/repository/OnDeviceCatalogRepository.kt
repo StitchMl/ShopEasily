@@ -252,6 +252,7 @@ class OnDeviceCatalogRepository(
      * Completes a user search with ordinary shelf prices from public product
      * pages of nearby retailers. Query-driven and parallel (4 stores at a time).
      */
+    @Suppress("kotlin:S3776") // Bounded parallel crawler: early exits protect network and battery budgets.
     suspend fun enrichRegularPrices(query: String): Int = withContext(Dispatchers.IO) {
         val normalizedQuery = query.trim().takeIf { it.length >= 2 } ?: return@withContext 0
         val now = System.currentTimeMillis()
@@ -317,6 +318,7 @@ class OnDeviceCatalogRepository(
      * incremental (stores refreshed recently are skipped unless [force]),
      * parallel, bounded in memory, and never throws for network problems.
      */
+    @Suppress("kotlin:S3776") // Two-phase synchronization keeps discovery, caching and progress transactional.
     suspend fun synchronize(
         latitude: Double,
         longitude: Double,
@@ -354,7 +356,7 @@ class OnDeviceCatalogRepository(
                             .putInt("radius", radiusKm).putLong("at", now).apply()
                     }
                 }
-                .map { store -> withBrandInfo(store, now) }
+                .map(::withBrandInfo)
         }
         val shops = discovered
             .filter { it.distanceMeters <= radiusKm * 1_000 }
@@ -424,6 +426,7 @@ class OnDeviceCatalogRepository(
         }
     }
 
+    @Suppress("kotlin:S3776", "kotlin:S107") // Explicit scan context prevents mutable shared request state.
     private suspend fun syncShop(
         shop: NearbyStore,
         userLat: Double,
@@ -443,7 +446,11 @@ class OnDeviceCatalogRepository(
             val independentName = shop.name.takeIf {
                 chainBrand == null && shop.brandWikidata == null && shop.website == null && !StoreDeduplicator.isGenericName(it)
             }
-            val lookupName = chainBrand ?: shop.name.takeIf { shop.brandWikidata != null } ?: independentName
+            val lookupName = when {
+                chainBrand != null -> chainBrand
+                shop.brandWikidata != null -> shop.name
+                else -> independentName
+            }
             // Independent shops: the address is required to accept a website (namesakes elsewhere).
             val locationHint = if (independentName != null && lookupName == independentName) {
                 listOfNotNull(shop.searchContext.takeIf(String::isNotBlank), shop.place).joinToString(" ").ifBlank { null }
@@ -458,9 +465,10 @@ class OnDeviceCatalogRepository(
                 null
             }
             // Looking up an independent shop's site (domain guesses, web search) is slow: deep pass only.
-            val brandInfo = lookupName?.takeIf { independentName == null || (locationHint != null && deep && placesWebsite == null) }?.let { name ->
-                runCatching { brands.resolve(name, shop.brandWikidata, now, locationHint) }.getOrNull()
-            }
+            val canResolveBrand = independentName == null || (locationHint != null && deep && placesWebsite == null)
+            val brandInfo = if (lookupName != null && canResolveBrand) {
+                runCatching { brands.resolve(lookupName, shop.brandWikidata, now, locationHint) }.getOrNull()
+            } else null
             val website = NonShopSites.shopWebsiteOrNull(shop.website)?.let(HttpFetcher::secureUrl)
                 ?: placesWebsite?.let(HttpFetcher::secureUrl)
                 ?: NonShopSites.shopWebsiteOrNull(brandInfo?.website)
@@ -472,7 +480,7 @@ class OnDeviceCatalogRepository(
             val offers = mutableListOf<Offer>()
             // Human-readable trace of what was tried, shown in "Fonti dei prezzi".
             val trace = mutableListOf<String>()
-            if (placesWebsite != null) trace += "sito da Google Maps: ${hostOf(placesWebsite)}"
+            placesWebsite?.let { trace += "sito pubblico verificato: ${hostOf(it)}" }
             if (lookupName != null) {
                 trace += "insegna: " + (brandInfo?.website?.let(::hostOf) ?: "sito non trovato") +
                     (if (directCatalogs.isNotEmpty()) ", volantini ${directCatalogs.size}" else "")
@@ -481,12 +489,12 @@ class OnDeviceCatalogRepository(
             // 1. Open Prices: crowdsourced price tags linked to this exact OSM shop.
             if (shop.osmType != null && shop.osmId != null) {
                 val locationUrl = OpenPricesSource.locationUrl(shop.osmType, shop.osmId)
-                val locationId = http.getText(locationUrl, HttpFetcher.MAX_JSON_BYTES, accept = "application/json")
+                val locationId = http.getText(locationUrl, HttpFetcher.MAX_JSON_BYTES, accept = JSON_MEDIA_TYPE)
                     ?.let(OpenPricesSource::locationId)
                 if (locationId != null) {
                     val pricesUrl = OpenPricesSource.pricesUrl(locationId, now)
                     val before = offers.size
-                    http.getText(pricesUrl, HttpFetcher.MAX_JSON_BYTES, accept = "application/json")
+                    http.getText(pricesUrl, HttpFetcher.MAX_JSON_BYTES, accept = JSON_MEDIA_TYPE)
                         ?.let { OpenPricesSource.parse(it, pricesUrl) }
                         ?.mapTo(offers) { it.toOffer(shop) }
                     trace += "Open Prices ${offers.size - before}"
@@ -574,7 +582,7 @@ class OnDeviceCatalogRepository(
     private fun ecommerceProducts(website: String): List<Offer> {
         val placeholder = NearbyStore(name = "", category = "", website = website, latitude = 0.0, longitude = 0.0, distanceMeters = 0, sustainable = false)
         for ((parserId, url) in EcommerceApiSource.candidateUrls(website)) {
-            val json = http.politeGet(url, HttpFetcher.MAX_JSON_BYTES, accept = "application/json")
+            val json = http.politeGet(url, HttpFetcher.MAX_JSON_BYTES, accept = JSON_MEDIA_TYPE)
                 ?.toString(Charsets.UTF_8) ?: continue
             if (!json.trimStart().startsWith("[") && !json.trimStart().startsWith("{")) continue
             val products = EcommerceApiSource.parse(parserId, json, url)
@@ -894,7 +902,7 @@ class OnDeviceCatalogRepository(
     }
 
     /** Applies what is already known about the store's brand (no network). */
-    private fun withBrandInfo(store: NearbyStore, now: Long): NearbyStore {
+    private fun withBrandInfo(store: NearbyStore): NearbyStore {
         val info = (store.brand ?: StoreDeduplicator.brandOf(store.name))?.let(brands::cached) ?: return store
         val withSite = store.copy(website = store.website ?: info.website)
         return info.description?.let { applyBrandDescription(withSite, it) } ?: withSite
@@ -926,6 +934,7 @@ class OnDeviceCatalogRepository(
                     is String -> image
                     is JSONArray -> image.optString(0)
                     is JSONObject -> image.optString("url")
+                    null -> null
                     else -> null
                 }?.takeIf { it.startsWith("http") }
                 if (name.isNotBlank() && price != null && price > 0.0) {
@@ -1035,6 +1044,7 @@ class OnDeviceCatalogRepository(
         productImageVerified = imageUrl != null,
     ).copy(sustainabilityLabels = (labels + inferredSustainabilityLabels(name)).distinct())
 
+    @Suppress("kotlin:S107") // Factory mirrors the immutable Offer data carried by heterogeneous parsers.
     private fun offer(
         name: String,
         store: String,
@@ -1265,6 +1275,7 @@ class OnDeviceCatalogRepository(
             "https://overpass.nchc.org.tw/api/interpreter",
         )
         const val USER_AGENT = "Mozilla/5.0 (Linux; Android 14; Mobile) ShopEasily/0.5 (+https://github.com/StitchMl/ShopEasily)"
+        const val JSON_MEDIA_TYPE = "application/json"
         const val PARALLEL_STORES = 4
         const val PARALLEL_FAST = 8
         const val MAX_FAST_DETAIL_PAGES = 4

@@ -52,6 +52,7 @@ object HtmlProductParser {
      * and climbs to the smallest block that also contains a product-like title.
      * Two prices in the same tile mean "was/now": the lower one is the offer price.
      */
+    @Suppress("kotlin:S3776") // Defensive heuristics reject unrelated prices from arbitrary retailer markup.
     private fun parseLooseBlocks(document: org.jsoup.nodes.Document): List<HtmlProduct> {
         val priceElements = document.body().select("*:matchesOwn(\\d{1,4}[,.]\\d{2})").take(MAX_PRICE_NODES)
         return priceElements.filterNot(::inBoilerplate).mapNotNull { priceElement ->

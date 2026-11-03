@@ -60,6 +60,7 @@ object BasketOptimizer {
      * Plans that cover only part of the list are kept (after the complete
      * ones) so the user always gets an answer and sees what is missing.
      */
+    @Suppress("kotlin:S3776") // Candidate pruning and partial-coverage fallback are one optimization pipeline.
     fun optimize(
         requestedItems: List<String>,
         catalog: List<CatalogPrice>,

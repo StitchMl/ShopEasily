@@ -7,6 +7,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 class FuelPriceRepository {
+    @Suppress("kotlin:S3776") // CSV filtering rules differ by fuel and self-service availability.
     suspend fun nationalMedian(fuel: FuelType): Double? = withContext(Dispatchers.IO) {
         if (fuel == FuelType.NONE) return@withContext 0.0
         if (fuel == FuelType.ELECTRIC) return@withContext ELECTRIC_REFERENCE_EUR_KWH

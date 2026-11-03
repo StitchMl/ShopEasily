@@ -508,6 +508,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /** Immediate UI projection; the regular search then validates it against Room. */
+    @Suppress("kotlin:S3776") // State projection is intentionally centralized to keep UI updates atomic.
     private fun applyCachedFilters(filters: SearchFilters) {
         instantFilterJob?.cancel()
         val source = catalogOffersCache ?: rankedCache
@@ -575,6 +576,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
      * by the sync worker) never cancel a search in progress: they are merged and run once
      * after it, otherwise continuous database writes could keep the list from ever loading.
      */
+    @Suppress("kotlin:S3776") // Search orchestration coordinates independent cached and network stages.
     private fun search(silent: Boolean = false, fromBackground: Boolean = false) {
         if (fromBackground && searchJob?.isActive == true) {
             pendingSilentRefresh = true

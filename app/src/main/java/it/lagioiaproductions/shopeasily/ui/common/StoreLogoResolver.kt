@@ -68,7 +68,8 @@ object StoreLogoResolver {
         brandImageSlugs(storeName).forEach { slug -> add("$BRAND_IMAGES/$slug.png") }
         val knownLogo = BrandDirectory.peekLogo(storeName)
         val brand = if (knownLogo == null) BrandDirectory.resolveForStore(storeName) else null
-        (knownLogo ?: brand?.logoUrl)?.let(::add)
+        val resolvedLogo = knownLogo ?: brand?.logoUrl
+        if (resolvedLogo != null) add(resolvedLogo)
         // Offer records often point to an aggregator or flyer URL: prefer the brand's own site.
         val ownSite = website?.takeUnless { url -> AGGREGATORS.any { url.contains(it, ignoreCase = true) } || NonShopSites.isNonShop(url) }
         val homepage = BrandDirectory.peekWebsite(storeName) ?: brand?.website ?: ownSite?.let(::normalizeWebsite)
@@ -122,6 +123,7 @@ object StoreLogoResolver {
 
     private fun Int?.orZero(): Int = this ?: 0
 
+    @Suppress("kotlin:S3776") // Every guard bounds untrusted remote image memory or I/O.
     private fun downloadBitmap(value: String): Bitmap? = runCatching {
         val connection = open(value)
         try {

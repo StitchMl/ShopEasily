@@ -41,6 +41,7 @@ object StoreSustainability {
         values.filterNotNull().maxByOrNull { strength[it.lowercase(Locale.ROOT)] ?: 0 }
             ?.takeIf { (strength[it.lowercase(Locale.ROOT)] ?: 0) > 0 }
 
+    @Suppress("kotlin:S3776") // Independent evidence rules intentionally remain auditable in one scoring table.
     fun evaluate(
         name: String,
         category: String,

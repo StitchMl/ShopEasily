@@ -42,7 +42,7 @@ object OpenPricesSource {
                 val baseName = product?.optNullableString("product_name")
                     ?: item.optNullableString("product_name")
                     ?: item.optNullableString("category_tag")?.let(::categoryName)
-                    ?: continue
+                if (baseName == null) continue
                 val quantity = product?.optNullableString("quantity")
                 val per = when (item.optNullableString("price_per")) {
                     "KILOGRAM" -> "al kg"

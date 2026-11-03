@@ -105,6 +105,7 @@ import org.maplibre.geojson.Point
 
 @SuppressLint("MissingPermission")
 @Composable
+@Suppress("kotlin:S3776") // Map lifecycle and Compose state must remain co-located for deterministic cleanup.
 fun MapScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val repository = remember { OnDeviceCatalogRepository(context.applicationContext) }

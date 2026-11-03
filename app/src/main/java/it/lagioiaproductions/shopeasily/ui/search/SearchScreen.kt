@@ -140,6 +140,7 @@ import kotlinx.coroutines.withContext
 
 @SuppressLint("MissingPermission")
 @Composable
+@Suppress("kotlin:S3776") // Compose renders conditional state declaratively; branches are not nested business logic.
 fun SearchScreen(
     viewModel: SearchViewModel,
     modifier: Modifier = Modifier,
