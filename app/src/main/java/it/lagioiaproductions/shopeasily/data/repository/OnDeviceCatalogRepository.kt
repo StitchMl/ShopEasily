@@ -450,7 +450,7 @@ class OnDeviceCatalogRepository(
                 chainBrand != null -> chainBrand
                 shop.brandWikidata != null -> shop.name
                 else -> independentName
-            }
+            }.orEmpty()
             // Independent shops: the address is required to accept a website (namesakes elsewhere).
             val locationHint = if (independentName != null && lookupName == independentName) {
                 listOfNotNull(shop.searchContext.takeIf(String::isNotBlank), shop.place).joinToString(" ").ifBlank { null }
@@ -465,8 +465,9 @@ class OnDeviceCatalogRepository(
                 null
             }
             // Looking up an independent shop's site (domain guesses, web search) is slow: deep pass only.
-            val canResolveBrand = independentName == null || (locationHint != null && deep && placesWebsite == null)
-            val brandInfo = if (lookupName != null && canResolveBrand) {
+            val canResolveBrand = lookupName.isNotBlank() &&
+                (independentName == null || (locationHint != null && deep && placesWebsite == null))
+            val brandInfo = if (canResolveBrand) {
                 runCatching { brands.resolve(lookupName, shop.brandWikidata, now, locationHint) }.getOrNull()
             } else null
             val website = NonShopSites.shopWebsiteOrNull(shop.website)?.let(HttpFetcher::secureUrl)
@@ -481,7 +482,7 @@ class OnDeviceCatalogRepository(
             // Human-readable trace of what was tried, shown in "Fonti dei prezzi".
             val trace = mutableListOf<String>()
             placesWebsite?.let { trace += "sito pubblico verificato: ${hostOf(it)}" }
-            if (lookupName != null) {
+            if (lookupName.isNotBlank()) {
                 trace += "insegna: " + (brandInfo?.website?.let(::hostOf) ?: "sito non trovato") +
                     (if (directCatalogs.isNotEmpty()) ", volantini ${directCatalogs.size}" else "")
             }

@@ -29,6 +29,7 @@ object OpenPricesSource {
         return "$API/prices?location_id=$locationId&date__gte=$since&ordering=-date&page_size=100"
     }
 
+    @Suppress("kotlin:S3776") // Input validation remains linear and rejects malformed crowdsourced rows early.
     fun parse(json: String, sourceUrl: String): List<SourceProduct> {
         val items = runCatching { JSONObject(json).optJSONArray("items") }.getOrNull() ?: return emptyList()
         return buildList {
@@ -42,7 +43,8 @@ object OpenPricesSource {
                 val baseName = product?.optNullableString("product_name")
                     ?: item.optNullableString("product_name")
                     ?: item.optNullableString("category_tag")?.let(::categoryName)
-                if (baseName == null) continue
+                    ?: ""
+                if (baseName.isBlank()) continue
                 val quantity = product?.optNullableString("quantity")
                 val per = when (item.optNullableString("price_per")) {
                     "KILOGRAM" -> "al kg"

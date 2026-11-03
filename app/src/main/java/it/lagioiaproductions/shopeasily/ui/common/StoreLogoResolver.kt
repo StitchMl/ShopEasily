@@ -72,8 +72,8 @@ object StoreLogoResolver {
         if (resolvedLogo != null) add(resolvedLogo)
         // Offer records often point to an aggregator or flyer URL: prefer the brand's own site.
         val ownSite = website?.takeUnless { url -> AGGREGATORS.any { url.contains(it, ignoreCase = true) } || NonShopSites.isNonShop(url) }
-        val homepage = BrandDirectory.peekWebsite(storeName) ?: brand?.website ?: ownSite?.let(::normalizeWebsite)
-        if (homepage != null) {
+        val homepage = (BrandDirectory.peekWebsite(storeName) ?: brand?.website ?: ownSite?.let(::normalizeWebsite)).orEmpty()
+        if (homepage.isNotBlank()) {
             addAll(discoverIcons(homepage))
             runCatching {
                 val uri = URI(homepage)
