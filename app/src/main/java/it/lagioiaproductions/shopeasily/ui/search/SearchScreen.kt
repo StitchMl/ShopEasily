@@ -59,6 +59,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -151,7 +152,7 @@ fun SearchScreen(
     val homeHelpSeen by locationPreferences.homeHelpSeen.collectAsStateWithLifecycle(initialValue = null)
     val coroutineScope = rememberCoroutineScope()
     var helpTopic by remember { mutableStateOf<HomeHelpTopic?>(null) }
-    var locationRefresh by remember { mutableStateOf(0) }
+    var locationRefresh by remember { mutableIntStateOf(0) }
     var locationGranted by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
@@ -524,7 +525,7 @@ private fun UserPriceDialog(
     var storeId by remember(preferredStoreId) { mutableStateOf(preferredStoreId) }
     var product by remember(initialProduct) { mutableStateOf(initialProduct) }
     var price by remember { mutableStateOf("") }
-    var quality by remember { mutableStateOf(0) }
+    var quality by remember { mutableIntStateOf(0) }
     var menuOpen by remember { mutableStateOf(false) }
     val selected = stores.firstOrNull { it.id == storeId }
     AlertDialog(
@@ -871,14 +872,18 @@ private fun openNavigation(context: android.content.Context, store: NearbyStore)
         Uri.parse("geo:${store.latitude},${store.longitude}?q=${store.latitude},${store.longitude}(${Uri.encode(store.name)})"),
     )
     try {
-        context.startActivity(if (maps.resolveActivity(context.packageManager) != null) maps else fallback)
+        context.startActivity(maps)
     } catch (_: ActivityNotFoundException) {
-        context.startActivity(
-            Intent(
-                Intent.ACTION_VIEW,
-                Uri.parse("https://www.google.com/maps/dir/?api=1&destination=${store.latitude},${store.longitude}"),
-            ),
-        )
+        try {
+            context.startActivity(fallback)
+        } catch (_: ActivityNotFoundException) {
+            context.startActivity(
+                Intent(
+                    Intent.ACTION_VIEW,
+                    Uri.parse("https://www.openstreetmap.org/?mlat=${store.latitude}&mlon=${store.longitude}#map=18/${store.latitude}/${store.longitude}"),
+                ),
+            )
+        }
     }
 }
 

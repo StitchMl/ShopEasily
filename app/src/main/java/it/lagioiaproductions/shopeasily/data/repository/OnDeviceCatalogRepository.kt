@@ -23,7 +23,6 @@ import it.lagioiaproductions.shopeasily.data.repository.parsers.ChainSourceAdapt
 import it.lagioiaproductions.shopeasily.data.repository.parsers.HtmlProductParser
 import it.lagioiaproductions.shopeasily.data.repository.parsers.OcrFlyerReader
 import it.lagioiaproductions.shopeasily.data.repository.parsers.OfferTextParser
-import it.lagioiaproductions.shopeasily.BuildConfig
 import it.lagioiaproductions.shopeasily.data.repository.sources.EcommerceApiSource
 import it.lagioiaproductions.shopeasily.data.repository.sources.FarmerMarketSource
 import it.lagioiaproductions.shopeasily.data.repository.sources.GooglePlacesSource
@@ -94,15 +93,12 @@ class OnDeviceCatalogRepository(
     private val appContext = context.applicationContext
     private val catalogFile = appContext.filesDir.resolve("scraped_catalog.json")
     private val dao = ShopEasilyDatabase.get(appContext).catalogDao()
-    private val routing = RoutingRepository()
+    private val routing = RoutingRepository(appContext)
     private val http = HttpFetcher(USER_AGENT)
     private val brands = BrandDirectory.get(appContext)
-    private val googlePlaces = GooglePlacesSource(
-        BuildConfig.GOOGLE_PLACES_API_KEY,
-        http,
-        androidPackage = appContext.packageName,
-        androidCertSha1 = signingCertSha1(appContext),
-    )
+    // Deliberately disabled: ShopEasily has no metered map/search API or embedded key.
+    // OSM, Overpass, Wikidata, official shop sites and Open Prices cover discovery.
+    private val googlePlaces = GooglePlacesSource("", http)
     private val farmerMarkets = FarmerMarketSource(http)
 
     fun observeSourceStatuses(): Flow<List<SourceStatusEntity>> = dao.observeSourceStatuses()
@@ -1277,6 +1273,8 @@ class OnDeviceCatalogRepository(
         val OVERPASS_URLS = listOf(
             "https://overpass-api.de/api/interpreter",
             "https://overpass.kumi.systems/api/interpreter",
+            "https://overpass.private.coffee/api/interpreter",
+            "https://overpass.nchc.org.tw/api/interpreter",
         )
         const val USER_AGENT = "Mozilla/5.0 (Linux; Android 14; Mobile) ShopEasily/0.5 (+https://github.com/StitchMl/ShopEasily)"
         const val PARALLEL_STORES = 4

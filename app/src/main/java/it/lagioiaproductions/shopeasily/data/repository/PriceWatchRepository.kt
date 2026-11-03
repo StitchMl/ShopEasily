@@ -1,6 +1,7 @@
 package it.lagioiaproductions.shopeasily.data.repository
 
 import android.content.Context
+import android.annotation.SuppressLint
 import it.lagioiaproductions.shopeasily.data.model.Offer
 import java.util.Locale
 
@@ -18,6 +19,7 @@ class PriceWatchRepository(context: Context) {
      * `apply()` writes on every search, which Android flushes synchronously when
      * the activity pauses (a classic ANR).
      */
+    @SuppressLint("ApplySharedPref") // Deliberately synchronous on a worker thread; see method contract.
     fun recordAndFindDrops(offers: List<Offer>): PriceHistoryUpdate {
         val minimums = offers.groupBy { normalize(it.productName) }.mapValues { (_, values) -> values.minOf(Offer::price) }
         val drops = mutableSetOf<String>()

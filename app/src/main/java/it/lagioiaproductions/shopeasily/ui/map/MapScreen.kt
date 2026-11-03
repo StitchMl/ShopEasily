@@ -6,7 +6,6 @@ import android.content.Intent
 import android.content.ActivityNotFoundException
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
-import android.location.Geocoder
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -46,6 +45,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -63,6 +63,7 @@ import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import it.lagioiaproductions.shopeasily.data.preferences.UserPreferencesRepository
 import it.lagioiaproductions.shopeasily.data.repository.NearbyStore
+import it.lagioiaproductions.shopeasily.data.repository.FreeGeocodingRepository
 import it.lagioiaproductions.shopeasily.data.repository.OnDeviceCatalogRepository
 import it.lagioiaproductions.shopeasily.ui.common.StoreLogoResolver
 import it.lagioiaproductions.shopeasily.domain.StoreSustainabilityResult
@@ -72,9 +73,9 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.sync.Semaphore
@@ -101,7 +102,6 @@ import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.geojson.Feature
 import org.maplibre.geojson.FeatureCollection
 import org.maplibre.geojson.Point
-import java.util.Locale
 
 @SuppressLint("MissingPermission")
 @Composable
@@ -109,6 +109,7 @@ fun MapScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val repository = remember { OnDeviceCatalogRepository(context.applicationContext) }
     val preferences = remember { UserPreferencesRepository(context.applicationContext) }
+    val geocoder = remember { FreeGeocodingRepository(context.applicationContext) }
     val searchArea by preferences.searchArea.collectAsStateWithLifecycle(initialValue = null)
     val scope = rememberCoroutineScope()
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -123,7 +124,7 @@ fun MapScreen(modifier: Modifier = Modifier) {
     var userLocation by remember { mutableStateOf<LatLng?>(null) }
     var stores by remember { mutableStateOf(emptyList<NearbyStore>()) }
     var isLoading by remember { mutableStateOf(false) }
-    var refreshKey by remember { mutableStateOf(0) }
+    var refreshKey by remember { mutableIntStateOf(0) }
     var mapInstance by remember { mutableStateOf<MapLibreMap?>(null) }
     var styleReady by remember { mutableStateOf(false) }
     var showLocationDialog by remember { mutableStateOf(false) }
@@ -141,7 +142,7 @@ fun MapScreen(modifier: Modifier = Modifier) {
             onCreate(null)
             getMapAsync { map ->
                 mapInstance = map
-                map.setStyle(Style.Builder().fromUri("asset://osm_style.json")) { style ->
+                map.setStyle(Style.Builder().fromUri("https://tiles.openfreemap.org/styles/liberty")) { style ->
                     style.addSource(GeoJsonSource(STORES_SOURCE, FeatureCollection.fromFeatures(emptyArray<Feature>())))
                     style.addLayer(
                         SymbolLayer("store-marks", STORES_SOURCE).withProperties(
@@ -360,7 +361,7 @@ fun MapScreen(modifier: Modifier = Modifier) {
                         resolvingLocation = true
                         locationError = null
                         scope.launch {
-                            val result = geocode(context, locationQuery)
+                            val result = geocoder.search(locationQuery)
                             resolvingLocation = false
                             if (result == null) {
                                 locationError = "Località non trovata"
@@ -461,16 +462,6 @@ internal fun closestStoreToTap(
         latitudeDelta * latitudeDelta + longitudeDelta * longitudeDelta
     }
 
-@Suppress("DEPRECATION")
-private suspend fun geocode(context: android.content.Context, query: String): Pair<Double, Double>? =
-    withContext(Dispatchers.IO) {
-        runCatching {
-            Geocoder(context, Locale.ITALY).getFromLocationName(query.trim(), 1)
-                ?.firstOrNull()
-                ?.let { it.latitude to it.longitude }
-        }.getOrNull()
-    }
-
 private fun openNavigation(context: android.content.Context, store: NearbyStore) {
     val uri = Uri.parse(
         "google.navigation:q=${store.latitude},${store.longitude}&mode=d",
@@ -480,18 +471,21 @@ private fun openNavigation(context: android.content.Context, store: NearbyStore)
         Intent.ACTION_VIEW,
         Uri.parse("geo:${store.latitude},${store.longitude}?q=${store.latitude},${store.longitude}(${Uri.encode(store.name)})"),
     )
-    val selectedIntent = if (intent.resolveActivity(context.packageManager) != null) intent else fallback
     try {
-        context.startActivity(selectedIntent)
+        context.startActivity(intent)
     } catch (_: ActivityNotFoundException) {
-        context.startActivity(
-            Intent(
-                Intent.ACTION_VIEW,
-                Uri.parse(
-                    "https://www.google.com/maps/dir/?api=1&destination=${store.latitude},${store.longitude}",
+        try {
+            context.startActivity(fallback)
+        } catch (_: ActivityNotFoundException) {
+            context.startActivity(
+                Intent(
+                    Intent.ACTION_VIEW,
+                    Uri.parse(
+                        "https://www.openstreetmap.org/?mlat=${store.latitude}&mlon=${store.longitude}#map=18/${store.latitude}/${store.longitude}",
+                    ),
                 ),
-            ),
-        )
+            )
+        }
     }
 }
 

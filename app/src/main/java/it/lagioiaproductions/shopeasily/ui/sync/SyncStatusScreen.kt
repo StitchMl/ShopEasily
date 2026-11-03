@@ -54,9 +54,7 @@ fun SyncStatusScreen(modifier: Modifier = Modifier, viewModel: SyncStatusViewMod
             style = MaterialTheme.typography.bodySmall,
         )
         Text(
-            "Negozi: © OpenStreetMap" +
-                (if (it.lagioiaproductions.shopeasily.BuildConfig.GOOGLE_PLACES_API_KEY.isNotBlank()) ", Google Maps" else "") +
-                " · Prezzi: siti dei negozi, Open Prices (Open Food Facts)",
+            "Negozi: © OpenStreetMap, Overpass · Prezzi: siti dei negozi, Open Prices (Open Food Facts)",
             style = MaterialTheme.typography.labelSmall,
         )
         LazyColumn(

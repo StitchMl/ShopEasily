@@ -61,7 +61,7 @@ class ShoppingListViewModel(application: Application) : AndroidViewModel(applica
     private val preferences = UserPreferencesRepository(application)
     private val catalog = FakeCatalogRepository()
     private val liveCatalog = OnDeviceCatalogRepository(application)
-    private val routing = RoutingRepository()
+    private val routing = RoutingRepository(application)
     private val optimization = MutableStateFlow(OptimizationState())
     private var optimizeJob: Job? = null
 

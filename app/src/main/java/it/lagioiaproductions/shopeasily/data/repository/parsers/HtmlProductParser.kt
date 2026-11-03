@@ -53,7 +53,7 @@ object HtmlProductParser {
      * Two prices in the same tile mean "was/now": the lower one is the offer price.
      */
     private fun parseLooseBlocks(document: org.jsoup.nodes.Document): List<HtmlProduct> {
-        val priceElements = document.body()?.select("*:matchesOwn(\\d{1,4}[,.]\\d{2})")?.take(MAX_PRICE_NODES) ?: return emptyList()
+        val priceElements = document.body().select("*:matchesOwn(\\d{1,4}[,.]\\d{2})").take(MAX_PRICE_NODES)
         return priceElements.filterNot(::inBoilerplate).mapNotNull { priceElement ->
             var block: Element? = priceElement
             for (level in 0 until 5) {
