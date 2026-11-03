@@ -1254,20 +1254,6 @@ class OnDeviceCatalogRepository(
 
     private fun ByteArray.startsWithPdfHeader() = size >= 4 && copyOfRange(0, 4).toString(Charsets.US_ASCII) == "%PDF"
 
-    /** SHA-1 of the signing certificate, uppercase hex (format expected by X-Android-Cert). */
-    private fun signingCertSha1(context: Context): String? = runCatching {
-        val pm = context.packageManager
-        val signatures = if (android.os.Build.VERSION.SDK_INT >= 28) {
-            pm.getPackageInfo(context.packageName, android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES)
-                .signingInfo?.apkContentsSigners
-        } else {
-            @Suppress("DEPRECATION")
-            pm.getPackageInfo(context.packageName, android.content.pm.PackageManager.GET_SIGNATURES).signatures
-        }
-        val cert = signatures?.firstOrNull()?.toByteArray() ?: return@runCatching null
-        java.security.MessageDigest.getInstance("SHA-1").digest(cert).joinToString("") { "%02X".format(it) }
-    }.getOrNull()
-
     private companion object {
         val PDF_LOCK = Any()
         val OVERPASS_URLS = listOf(
